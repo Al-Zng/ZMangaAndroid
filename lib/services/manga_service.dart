@@ -26,7 +26,8 @@ class MangaService {
           html.contains('Checking your browser') ||
           html.contains('Attention Required')) {
         AppState.current?.triggerCloudflare(urlString);
-        throw Exception('Cloudflare challenge');
+        // ✅ لا ترمي استثناء – توقف هنا فقط
+        return '';
       }
       return html;
     } else {
@@ -37,12 +38,14 @@ class MangaService {
   Future<List<Manga>> fetchLatest({int page = 1}) async {
     final url = '$baseURL/manga/?m_orderby=latest&page=$page';
     final html = await fetchHTML(url);
+    if (html.isEmpty) return [];
     return _parseMangaList(html, extractChapterInfo: true);
   }
 
   Future<List<Manga>> fetchPopular({int page = 1}) async {
     final url = '$baseURL/manga/?m_orderby=views&page=$page';
     final html = await fetchHTML(url);
+    if (html.isEmpty) return [];
     return _parseMangaList(html, extractChapterInfo: false);
   }
 
@@ -50,6 +53,7 @@ class MangaService {
     final encoded = Uri.encodeQueryComponent(query);
     final url = '$baseURL/?s=$encoded&post_type=wp-manga&page=$page';
     final html = await fetchHTML(url);
+    if (html.isEmpty) return [];
     return _parseMangaList(html, extractChapterInfo: false)
         .where((m) => !m.slug.contains('feed') && m.slug.isNotEmpty)
         .toList();
@@ -58,21 +62,25 @@ class MangaService {
   Future<List<Manga>> fetchByGenre(String genre, {int page = 1}) async {
     final url = '$baseURL/manga-genre/$genre/?page=$page';
     final html = await fetchHTML(url);
+    if (html.isEmpty) return [];
     return _parseMangaList(html, extractChapterInfo: false);
   }
 
   Future<Manga> fetchDetail(String slug) async {
     final url = '$baseURL/manga/$slug/';
     final html = await fetchHTML(url);
+    if (html.isEmpty) throw Exception('Cloudflare challenge');
     return _parseMangaDetail(html, slug);
   }
 
   Future<List<String>> fetchChapterPages(String mangaSlug, String chapterSlug) async {
     final url = '$baseURL/manga/$mangaSlug/$chapterSlug/';
     final html = await fetchHTML(url);
+    if (html.isEmpty) return [];
     return _parseChapterPages(html);
   }
 
+  // ---------- دوال التحليل كما هي ----------
   List<Manga> _parseMangaList(String html, {required bool extractChapterInfo}) {
     final results = <Manga>[];
     final cardPattern = RegExp(r'<div class="page-item-detail[^"]*">(.*?)</div>\s*</div>\s*</div>', dotAll: true);
