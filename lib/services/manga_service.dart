@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:html/parser.dart' as html_parser;
+import 'package:http/http.dart' as http;
 import '../models.dart';
 import 'cookie_service.dart';
 
@@ -71,10 +72,9 @@ class MangaService {
     return _parseChapterPages(html);
   }
 
-  // ========= أدوات التحليل =========
+  // ---------- Internal Parsing (same logic as Swift) ----------
   List<Manga> _parseMangaList(String html, {required bool extractChapterInfo}) {
     final results = <Manga>[];
-    // استخدام regex بنفس منطق Swift
     final cardPattern = RegExp(r'<div class="page-item-detail[^"]*">(.*?)</div>\s*</div>\s*</div>', dotAll: true);
     for (final match in cardPattern.allMatches(html).take(30)) {
       final block = match.group(1)!;
@@ -113,7 +113,6 @@ class MangaService {
   }
 
   String _extractBestImageURL(String block) {
-    // order: data-src > srcset > src
     final dataSrcReg = RegExp(r'''<img[^>]+data-src="([^"]+(?:\.jpg|\.jpeg|\.png|\.webp)[^"]*)"[^>]*>''');
     final match = dataSrcReg.firstMatch(block);
     if (match != null && !_isLogoOnly(match.group(1)!)) return match.group(1)!;
@@ -193,7 +192,7 @@ class MangaService {
       final fallbackReg = RegExp(r'''href="https?://[^/]+/manga/[^/]+/(\d+(?:-\d+)?)/"[^>]*>''');
       for (final m in fallbackReg.allMatches(html)) {
         final cSlug = m.group(1)!;
-        final num = cSlug.replaceAll(RegExp(r'\D'), ''); // digits only
+        final num = cSlug.replaceAll(RegExp(r'\D'), '');
         if (!chapters.any((c) => c.slug == cSlug)) chapters.add(Chapter(slug: cSlug, number: num));
       }
     }
