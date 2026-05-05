@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'models.dart';
+import 'services/cookie_service.dart';
 
 class AppState extends ChangeNotifier {
+  static AppState? current; // للإشارة من الخدمات
   List<ReadingProgress> _history = [];
   List<Manga> _library = [];
   bool _showCloudflareSheet = false;
@@ -17,8 +19,14 @@ class AppState extends ChangeNotifier {
   int get reloadTrigger => _reloadTrigger;
 
   AppState() {
-    _loadHistory();
-    _loadLibrary();
+    current = this;
+    _init();
+  }
+
+  Future<void> _init() async {
+    await CookieService().init();
+    await _loadHistory();
+    await _loadLibrary();
   }
 
   void saveProgress(ReadingProgress progress) {
