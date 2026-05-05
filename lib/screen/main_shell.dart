@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../app_state.dart';
 import '../theme.dart';
 import 'home_screen.dart';
 import 'search_screen.dart';
 import 'library_screen.dart';
 import 'history_screen.dart';
-import 'cloudflare_sheet.dart'; // لاستيراد CloudflareSheet (قد لا تحتاجه هنا لكنه موجود في main)
+import 'cloudflare_sheet.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -15,6 +17,7 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
+  bool _cloudflareOpen = false;
 
   final List<Widget> _tabs = const [
     HomeScreen(),
@@ -22,6 +25,39 @@ class _MainShellState extends State<MainShell> {
     LibraryScreen(),
     HistoryScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // تسجيل المستمع بعد أن يصبح context جاهزاً للـ navigation
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AppState>().addListener(_checkCloudflare);
+    });
+  }
+
+  @override
+  void dispose() {
+    context.read<AppState>().removeListener(_checkCloudflare);
+    super.dispose();
+  }
+
+  void _checkCloudflare() {
+    final state = context.read<AppState>();
+    if (!state.showCloudflareSheet || _cloudflareOpen) return;
+    _cloudflareOpen = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const CloudflareSheet(),
+          settings: const RouteSettings(name: '/cloudflare'),
+        ),
+      ).then((_) {
+        _cloudflareOpen = false;
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
