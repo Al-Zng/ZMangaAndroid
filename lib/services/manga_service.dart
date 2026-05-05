@@ -1,6 +1,9 @@
 import 'dart:convert';
-import 'package:cloudflare_bypass/cloudflare_bypass.dart';
+import 'package:html/parser.dart' as html_parser;
+import 'package:http/http.dart' as http;
+import '../app_state.dart';
 import '../models.dart';
+import 'cookie_service.dart';
 
 class MangaService {
   static const String baseURL = 'https://lek-manga.net';
@@ -8,23 +11,29 @@ class MangaService {
   factory MangaService() => _instance;
   MangaService._internal();
 
-  static final BypassHttpClient _client = BypassHttpClient();
-
   Future<String> fetchHTML(String urlString) async {
-    final uri = Uri.parse(urlString);
-    try {
-      final response = await _client.get(uri);
-      if (response.statusCode == 200) {
-        return response.body;
-      } else {
-        throw Exception('Failed to load: ${response.statusCode}');
+    final client = CookieService().client;
+    var request = http.Request('GET', Uri.parse(urlString));
+    request.headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+    request.headers['Referer'] = 'https://lek-manga.net';
+    final streamed = await client.send(request);
+    final response = await http.Response.fromStream(streamed);
+
+    if (response.statusCode == 200) {
+      final html = response.body;
+      if (html.contains('Just a moment') ||
+          html.contains('cf-browser-verification') ||
+          html.contains('Checking your browser') ||
+          html.contains('Attention Required')) {
+        AppState.current?.triggerCloudflare(urlString);
+        throw Exception('Cloudflare challenge');
       }
-    } catch (e) {
-      throw Exception('Failed to load: $e');
+      return html;
+    } else {
+      throw Exception('Failed to load: ${response.statusCode}');
     }
   }
 
-  // --- جلب القوائم ---
   Future<List<Manga>> fetchLatest({int page = 1}) async {
     final url = '$baseURL/manga/?m_orderby=latest&page=$page';
     final html = await fetchHTML(url);
@@ -64,7 +73,6 @@ class MangaService {
     return _parseChapterPages(html);
   }
 
-  // ---------- دوال التحليل الداخلية (نفس منطق Swift الأصلي) ----------
   List<Manga> _parseMangaList(String html, {required bool extractChapterInfo}) {
     final results = <Manga>[];
     final cardPattern = RegExp(r'<div class="page-item-detail[^"]*">(.*?)</div>\s*</div>\s*</div>', dotAll: true);
