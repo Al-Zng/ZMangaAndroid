@@ -23,7 +23,7 @@ class CachedMangaImage extends StatelessWidget {
     }
     return CachedNetworkImage(
       imageUrl: url!,
-      httpHeaders: {'Referer': 'https://lek-manga.net'},
+      httpHeaders: {'Referer': 'https://lekmanga.site'},
       width: width,
       height: height,
       fit: fit,
