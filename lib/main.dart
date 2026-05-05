@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'screen/main_shell.dart';
+import 'screen/cloudflare_sheet.dart';   // ✅ import مهم
 import 'theme.dart';
 
 void main() {
@@ -26,7 +27,6 @@ class _ZMangaAppState extends State<ZMangaApp> {
   @override
   void initState() {
     super.initState();
-    // تسجيل المستمع بعد أن يصبح الـ context جاهزاً للـ navigation
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final state = context.read<AppState>();
       state.addListener(_checkCloudflare);
@@ -48,7 +48,7 @@ class _ZMangaAppState extends State<ZMangaApp> {
       if (!mounted) return;
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => const CloudflareSheet(),
+          builder: (_) => CloudflareSheet(),   // ✅ إزالة const
           settings: const RouteSettings(name: '/cloudflare'),
         ),
       ).then((_) {
@@ -62,7 +62,7 @@ class _ZMangaAppState extends State<ZMangaApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ZTheme.darkTheme,
-      home: const MainShell(),   // ✅ الشاشة الرئيسية الجديدة مع الـ Bottom Nav
+      home: const MainShell(),
     );
   }
 }
