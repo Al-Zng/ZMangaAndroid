@@ -24,6 +24,17 @@ jobs:
       with:
         channel: 'stable'
 
+    # ✅ حذف مجلد android القديم وإعادة إنشائه بإصدار v2 embedding الحديث
+    - name: Recreate Android folder with v2 embedding
+      run: |
+        rm -rf android
+        flutter create --platforms android .
+
+    # ✅ إضافة صلاحية الإنترنت إلى البيان
+    - name: Add INTERNET permission
+      run: |
+        sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
+
     - name: Get dependencies
       run: flutter pub get
 
