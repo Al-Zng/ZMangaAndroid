@@ -5,7 +5,8 @@ import 'models.dart';
 import 'services/cookie_service.dart';
 
 class AppState extends ChangeNotifier {
-  static AppState? current; // للإشارة من الخدمات
+  static AppState? current;
+
   List<ReadingProgress> _history = [];
   List<Manga> _library = [];
   bool _showCloudflareSheet = false;
@@ -56,7 +57,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool isInLibrary(Manga manga) => _library.any((m) => m.slug == manga.slug);
+  bool isInLibrary(Manga manga) =>
+      _library.any((m) => m.slug == manga.slug);
 
   void triggerCloudflare(String url) {
     _cloudflareURL = url;
