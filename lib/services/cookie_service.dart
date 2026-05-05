@@ -23,7 +23,6 @@ class CookieService {
     return _client!;
   }
 
-  /// استبدال الكوكيز من WebView
   Future<void> setCookiesFromList(List<Map<String, String>> cookies) async {
     final uri = Uri.parse('https://lek-manga.net');
     final cookiesToSave = cookies.map((c) {
@@ -52,12 +51,19 @@ class HttpClientWithJar extends http.BaseClient {
       request.headers['Cookie'] = cookieString;
     }
     final response = await _inner.send(request);
-    if (response.headers.containsKey('set-cookie')) {
-      final setCookieHeaders = response.headers['set-cookie']!;
-      await cookieJar.saveFromResponse(
-        uri,
-        setCookieHeaders.map((s) => Cookie.fromSetCookieValue(s)).toList(),
-      );
+
+    // تحويل رأس set-cookie (نص واحد) إلى قائمة كوكيز
+    final setCookieHeader = response.headers['set-cookie'];
+    if (setCookieHeader != null) {
+      final cookieList = <Cookie>[];
+      // يقسم النص عند الفاصلة، مع مراعاة أن بعض التواريخ تحتوي فواصل.
+      // الطريقة الآمنة: استخدام exp: العبور على كل جزء.
+      setCookieHeader.split(',').forEach((part) {
+        try {
+          cookieList.add(Cookie.fromSetCookieValue(part.trim()));
+        } catch (_) {}
+      });
+      await cookieJar.saveFromResponse(uri, cookieList);
     }
     return response;
   }
