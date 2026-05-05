@@ -1,13 +1,18 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+
 class Manga {
   final String slug;
   final String title;
   final String coverURL;
-  List<String> genres;
-  String status;
-  String rating;
-  String description;
-  List<Chapter> chapters;
-  String author;
+  final List<String> genres;
+  final String status;
+  final String rating;
+  final String description;
+  final List<Chapter> chapters;
+  final String author;
+  final String artist;
+
   String? latestChapterNumber;
   String? lastUpdated;
 
@@ -21,6 +26,7 @@ class Manga {
     this.description = '',
     this.chapters = const [],
     this.author = '',
+    this.artist = '',
     this.latestChapterNumber,
     this.lastUpdated,
   });
@@ -34,33 +40,68 @@ class Manga {
     return url;
   }
 
+  Manga copyWith({
+    String? slug,
+    String? title,
+    String? coverURL,
+    List<String>? genres,
+    String? status,
+    String? rating,
+    String? description,
+    List<Chapter>? chapters,
+    String? author,
+    String? artist,
+    String? latestChapterNumber,
+    String? lastUpdated,
+  }) {
+    return Manga(
+      slug: slug ?? this.slug,
+      title: title ?? this.title,
+      coverURL: coverURL ?? this.coverURL,
+      genres: genres ?? this.genres,
+      status: status ?? this.status,
+      rating: rating ?? this.rating,
+      description: description ?? this.description,
+      chapters: chapters ?? this.chapters,
+      author: author ?? this.author,
+      artist: artist ?? this.artist,
+      latestChapterNumber: latestChapterNumber ?? this.latestChapterNumber,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
+    );
+  }
+
   factory Manga.fromJson(Map<String, dynamic> json) => Manga(
-    slug: json['slug'] ?? '',
-    title: json['title'] ?? '',
-    coverURL: json['coverURL'] ?? '',
-    genres: List<String>.from(json['genres'] ?? []),
-    status: json['status'] ?? '',
-    rating: json['rating'] ?? '',
-    description: json['description'] ?? '',
-    chapters: (json['chapters'] as List<dynamic>?)?.map((e) => Chapter.fromJson(e)).toList() ?? [],
-    author: json['author'] ?? '',
-    latestChapterNumber: json['latestChapterNumber'],
-    lastUpdated: json['lastUpdated'],
-  );
+        slug: json['slug'] ?? '',
+        title: json['title'] ?? '',
+        coverURL: json['coverURL'] ?? '',
+        genres: List<String>.from(json['genres'] ?? []),
+        status: json['status'] ?? '',
+        rating: json['rating'] ?? '',
+        description: json['description'] ?? '',
+        chapters: (json['chapters'] as List<dynamic>?)
+                ?.map((e) => Chapter.fromJson(e))
+                .toList() ??
+            [],
+        author: json['author'] ?? '',
+        artist: json['artist'] ?? '',
+        latestChapterNumber: json['latestChapterNumber'],
+        lastUpdated: json['lastUpdated'],
+      );
 
   Map<String, dynamic> toJson() => {
-    'slug': slug,
-    'title': title,
-    'coverURL': coverURL,
-    'genres': genres,
-    'status': status,
-    'rating': rating,
-    'description': description,
-    'chapters': chapters.map((c) => c.toJson()).toList(),
-    'author': author,
-    'latestChapterNumber': latestChapterNumber,
-    'lastUpdated': lastUpdated,
-  };
+        'slug': slug,
+        'title': title,
+        'coverURL': coverURL,
+        'genres': genres,
+        'status': status,
+        'rating': rating,
+        'description': description,
+        'chapters': chapters.map((c) => c.toJson()).toList(),
+        'author': author,
+        'artist': artist,
+        'latestChapterNumber': latestChapterNumber,
+        'lastUpdated': lastUpdated,
+      };
 }
 
 class Chapter {
@@ -79,20 +120,20 @@ class Chapter {
   });
 
   factory Chapter.fromJson(Map<String, dynamic> json) => Chapter(
-    slug: json['slug'] ?? '',
-    number: json['number'] ?? '',
-    title: json['title'] ?? '',
-    date: json['date'] ?? '',
-    pages: List<String>.from(json['pages'] ?? []),
-  );
+        slug: json['slug'] ?? '',
+        number: json['number'] ?? '',
+        title: json['title'] ?? '',
+        date: json['date'] ?? '',
+        pages: List<String>.from(json['pages'] ?? []),
+      );
 
   Map<String, dynamic> toJson() => {
-    'slug': slug,
-    'number': number,
-    'title': title,
-    'date': date,
-    'pages': pages,
-  };
+        'slug': slug,
+        'number': number,
+        'title': title,
+        'date': date,
+        'pages': pages,
+      };
 }
 
 class ReadingProgress {
@@ -115,22 +156,24 @@ class ReadingProgress {
   }) : lastRead = lastRead ?? DateTime.now();
 
   factory ReadingProgress.fromJson(Map<String, dynamic> json) => ReadingProgress(
-    mangaSlug: json['mangaSlug'] ?? '',
-    mangaTitle: json['mangaTitle'] ?? '',
-    mangaCover: json['mangaCover'] ?? '',
-    chapterSlug: json['chapterSlug'] ?? '',
-    chapterNumber: json['chapterNumber'] ?? '',
-    pageIndex: json['pageIndex'] ?? 0,
-    lastRead: json['lastRead'] != null ? DateTime.parse(json['lastRead']) : DateTime.now(),
-  );
+        mangaSlug: json['mangaSlug'] ?? '',
+        mangaTitle: json['mangaTitle'] ?? '',
+        mangaCover: json['mangaCover'] ?? '',
+        chapterSlug: json['chapterSlug'] ?? '',
+        chapterNumber: json['chapterNumber'] ?? '',
+        pageIndex: json['pageIndex'] ?? 0,
+        lastRead: json['lastRead'] != null
+            ? DateTime.parse(json['lastRead'])
+            : DateTime.now(),
+      );
 
   Map<String, dynamic> toJson() => {
-    'mangaSlug': mangaSlug,
-    'mangaTitle': mangaTitle,
-    'mangaCover': mangaCover,
-    'chapterSlug': chapterSlug,
-    'chapterNumber': chapterNumber,
-    'pageIndex': pageIndex,
-    'lastRead': lastRead.toIso8601String(),
-  };
+        'mangaSlug': mangaSlug,
+        'mangaTitle': mangaTitle,
+        'mangaCover': mangaCover,
+        'chapterSlug': chapterSlug,
+        'chapterNumber': chapterNumber,
+        'pageIndex': pageIndex,
+        'lastRead': lastRead.toIso8601String(),
+      };
 }
