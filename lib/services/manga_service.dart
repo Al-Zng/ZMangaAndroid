@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
+import '../app_state.dart';                      // ✅ استيراد AppState
 import '../models.dart';
 import 'cookie_service.dart';
 
@@ -83,8 +84,7 @@ class MangaService {
         if (_isLogoOnly(manga.coverURL)) continue;
         if (extractChapterInfo) {
           final info = _parseLatestChapterInfo(block);
-          manga.latestChapterNumber = info.chapter;
-          manga.lastUpdated = info.time;
+          manga = manga.copyWith(latestChapterNumber: info.chapter, lastUpdated: info.time);
         }
         results.add(manga);
       }
@@ -142,12 +142,11 @@ class MangaService {
       final rawTitle = m.group(3)!.trim();
       if (slug.isEmpty || rawTitle.isEmpty || rawTitle.length > 200 || slug == 'feed' || slug.contains('cdn-cgi')) continue;
       if (results.any((r) => r.slug == slug)) continue;
-      var manga = Manga(slug: slug, title: _htmlDecode(rawTitle));
-      manga.coverURL = _extractBestImageURL(html);
+      final cover = _extractBestImageURL(html);
+      var manga = Manga(slug: slug, title: _htmlDecode(rawTitle), coverURL: _isLogoOnly(cover) ? '' : cover);
       if (extractChapterInfo) {
         final info = _parseLatestChapterInfo(html);
-        manga.latestChapterNumber = info.chapter;
-        manga.lastUpdated = info.time;
+        manga = manga.copyWith(latestChapterNumber: info.chapter, lastUpdated: info.time);
       }
       results.add(manga);
     }
@@ -176,7 +175,7 @@ class MangaService {
     final statusReg = RegExp(r'''<div class="summary-content">\s*(مستمرة|مكتملة|Ongoing|Completed)\s*</div>''');
     final status = statusReg.firstMatch(html)?.group(1) ?? '';
     final authorReg = RegExp(r'''class="author-content">(.*?)</div>''', dotAll: true);
-    final author = authorReg.firstMatch(html)?.group(1)?.let(stripHTML) ?? '';
+    final author = authorReg.firstMatch(html)?.group(1)?.let((it) => stripHTML(it)) ?? '';
     final genres = <String>[];
     final genreReg = RegExp(r'''/manga-genre/[^/]+/">([^<]+)</a>''');
     genreReg.allMatches(html).forEach((m) => genres.add(m.group(1)!));
@@ -273,6 +272,7 @@ class _ChapterInfo {
 extension on String {
   String capitalize() => '${this[0].toUpperCase()}${substring(1)}';
 }
+
 extension on Object? {
   R let<R>(R Function(dynamic) cb) => cb(this);
 }
