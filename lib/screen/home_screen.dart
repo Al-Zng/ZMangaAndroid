@@ -28,7 +28,20 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       loadInitial();
+      context.read<AppState>().addListener(_onReloadTrigger);
     });
+  }
+
+  @override
+  void dispose() {
+    context.read<AppState>().removeListener(_onReloadTrigger);
+    super.dispose();
+  }
+
+  void _onReloadTrigger() {
+    // عندما triggerReload يُستدعى (بعد غلق Cloudflare)، نُعيد تحميل القوائم
+    loadLatest(reset: true);
+    loadPopular();
   }
 
   Future<void> loadInitial() async {
