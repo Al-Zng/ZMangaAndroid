@@ -1,6 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import '../app_state.dart';
 import '../services/cookie_service.dart';
 import '../theme.dart';
@@ -21,26 +22,56 @@ class _CloudflareSheetState extends State<CloudflareSheet> {
     final store = context.read<AppState>();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1')
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) {
-          // يمكنك إضافة تحقق من النجاح هنا
-        },
-      ))
+      ..setUserAgent(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (url) {
+            // يمكننا هنا التحقق من اختفاء صفحة التحدي
+          },
+        ),
+      )
       ..loadRequest(Uri.parse(store.cloudflareURL!));
   }
 
-  Future<void> _done() async {
+  /// استخراج جميع الكوكيز من WebView الحالي وحفظها في CookieJar
+  Future<void> _extractAndSaveCookies() async {
     try {
-      final cookiesJs = await _controller.runJavaScriptReturningResult(
-        "JSON.stringify(document.cookie.split('; ').filter(Boolean).map(c => {var parts = c.split('='); return {name: parts[0], value: parts.slice(1).join('=')}}))"
+      // جلب الكوكيز بصيغة JSON من JavaScript
+      final result = await _controller.runJavaScriptReturningResult(
+        "JSON.stringify(document.cookie.split('; ').filter(Boolean).map(c => {var i = c.indexOf('='); return {name: c.substring(0, i), value: c.substring(i+1)}}))"
       );
-      // In real implementation, you'd parse the string and call CookieService().setCookiesFromList
-      // For simplicity, we just notify and close
-    } catch (_) {}
+
+      if (result is String && result.isNotEmpty && result != 'null') {
+        final List<dynamic> cookiesList = jsonDecode(result);
+        final List<Map<String, String>> cookies = cookiesList.map((c) {
+          return {
+            'name': c['name']?.toString() ?? '',
+            'value': c['value']?.toString() ?? '',
+            'domain': 'lek-manga.net',
+            'path': '/',
+            'httpOnly': 'false',
+            'secure': 'true',
+          };
+        }).toList();
+
+        // حفظها عبر CookieService (وهي تستخدم PersistentCookieJar)
+        await CookieService().setCookiesFromList(cookies);
+      }
+    } catch (e) {
+      debugPrint('Failed to extract cookies: $e');
+    }
+  }
+
+  /// الضغط على "Done" أو إكمال التحقق بنجاح
+  Future<void> _onComplete() async {
+    await _extractAndSaveCookies();
+
     if (!mounted) return;
-    context.read<AppState>().dismissCloudflare();
-    context.read<AppState>().triggerReload();
+    final store = context.read<AppState>();
+    store.dismissCloudflare();
+    store.triggerReload();
   }
 
   @override
@@ -49,9 +80,22 @@ class _CloudflareSheetState extends State<CloudflareSheet> {
       backgroundColor: ZTheme.bg,
       appBar: AppBar(
         backgroundColor: ZTheme.surface,
-        title: const Text('Security Check'),
-        leading: TextButton(onPressed: () => context.read<AppState>().dismissCloudflare(), child: const Text('Cancel')),
-        actions: [TextButton(onPressed: _done, child: const Text('Done'))],
+        title: const Text(
+          'Security Check',
+          style: TextStyle(color: ZTheme.textPrimary),
+        ),
+        leading: TextButton(
+          onPressed: () {
+            context.read<AppState>().dismissCloudflare();
+          },
+          child: const Text('Cancel', style: TextStyle(color: ZTheme.accent)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _onComplete,
+            child: const Text('Done', style: TextStyle(color: ZTheme.accent)),
+          ),
+        ],
       ),
       body: WebViewWidget(controller: _controller),
     );
