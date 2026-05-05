@@ -24,7 +24,7 @@ class CookieService {
   }
 
   Future<void> setCookiesFromList(List<Map<String, String>> cookies) async {
-    final uri = Uri.parse('https://lek-manga.net');
+    final uri = Uri.parse('https://lekmanga.site');
     final cookiesToSave = cookies.map((c) {
       return Cookie(c['name']!, c['value']!)
         ..domain = c['domain'] ?? uri.host
