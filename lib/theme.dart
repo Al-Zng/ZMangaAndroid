@@ -18,7 +18,6 @@ class ZTheme {
   static const Color success = Color(0xFF4CAF82);
   static const Color warning = Color(0xFFE8A84F);
 
-  // accentDim is not const because it uses opacity; keep as static getter
   static Color get accentDim => accent.withOpacity(0.15);
 
   static ThemeData get darkTheme => ThemeData(
@@ -36,7 +35,7 @@ class ZTheme {
           elevation: 0,
           centerTitle: true,
         ),
-        tabBarTheme: const TabBarThemeData(   // ✅ استخدم TabBarThemeData
+        tabBarTheme: const TabBarThemeData(
           labelColor: accent,
           unselectedLabelColor: textTertiary,
           indicatorColor: accent,
