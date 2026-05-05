@@ -1,5 +1,5 @@
-name: hello_world
-description: A new Flutter project.
+name: zmanga
+description: Flutter manga reader app.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -9,6 +9,17 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  provider: ^6.1.1
+  shared_preferences: ^2.2.2
+  cached_network_image: ^3.3.1
+  webview_flutter: ^4.4.2
+  html: ^0.15.4
+  intl: ^0.18.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
 
 flutter:
   uses-material-design: true
