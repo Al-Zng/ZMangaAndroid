@@ -48,7 +48,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     children: [
                       Row(children: [
                         Text('Ch.${p.chapterNumber}', style: const TextStyle(color: ZTheme.accent)),
-                        const Text(' · Page ${p.pageIndex + 1}', style: TextStyle(color: ZTheme.textSecondary)),
+                        Text(' · Page ${p.pageIndex + 1}', style: const TextStyle(color: ZTheme.textSecondary)), // ✅ إزالة const من النص المتغير
                       ]),
                       Text(_timeAgo(p.lastRead), style: const TextStyle(color: ZTheme.textTertiary, fontSize: 11)),
                     ],
