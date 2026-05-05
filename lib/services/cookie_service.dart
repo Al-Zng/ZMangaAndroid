@@ -52,12 +52,9 @@ class HttpClientWithJar extends http.BaseClient {
     }
     final response = await _inner.send(request);
 
-    // تحويل رأس set-cookie (نص واحد) إلى قائمة كوكيز
     final setCookieHeader = response.headers['set-cookie'];
     if (setCookieHeader != null) {
       final cookieList = <Cookie>[];
-      // يقسم النص عند الفاصلة، مع مراعاة أن بعض التواريخ تحتوي فواصل.
-      // الطريقة الآمنة: استخدام exp: العبور على كل جزء.
       setCookieHeader.split(',').forEach((part) {
         try {
           cookieList.add(Cookie.fromSetCookieValue(part.trim()));
