@@ -29,9 +29,17 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
-    // تسجيل المستمع بعد أن يصبح context جاهزاً للـ navigation
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<AppState>().addListener(_checkCloudflare);
+
+      // ===== سطر تشخيصي مؤقت =====
+      // سيُظهر نافذة Cloudflare بعد 3 ثوانٍ من فتح التطبيق.
+      // بعد أن تتأكد من ظهور النافذة، احذف هذه الأسطر أو علّقها.
+      Future.delayed(const Duration(seconds: 3), () {
+        if (!mounted) return;
+        context.read<AppState>().triggerCloudflare('https://lek-manga.net');
+      });
+      // ===========================
     });
   }
 
