@@ -1,0 +1,39 @@
+import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../theme.dart';
+
+class CachedMangaImage extends StatelessWidget {
+  final String? url;
+  final BoxFit fit;
+  final double? width;
+  final double? height;
+
+  const CachedMangaImage({
+    Key? key,
+    this.url,
+    this.fit = BoxFit.cover,
+    this.width,
+    this.height,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    if (url == null || url!.isEmpty || url!.toLowerCase().contains('lekmanga.png') || url!.contains('-512.png')) {
+      return _placeholder();
+    }
+    return CachedNetworkImage(
+      imageUrl: url!,
+      httpHeaders: {'Referer': 'https://lek-manga.net'},
+      width: width,
+      height: height,
+      fit: fit,
+      placeholder: (_, __) => _placeholder(),
+      errorWidget: (_, __, ___) => _placeholder(),
+    );
+  }
+
+  Widget _placeholder() => Container(
+        color: ZTheme.card,
+        child: Center(child: Icon(Icons.image, color: ZTheme.textTertiary)),
+      );
+}
