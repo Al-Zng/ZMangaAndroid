@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:persistent_cookie_jar/persistent_cookie_jar.dart';
+import 'package:cookie_jar/cookie_jar.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -8,12 +8,12 @@ class CookieService {
   factory CookieService() => _instance;
   CookieService._internal();
 
-  late PersistentCookieJar _cookieJar;
+  late PersistCookieJar _cookieJar;
   http.Client? _client;
 
   Future<void> init() async {
     final dir = await getApplicationDocumentsDirectory();
-    _cookieJar = PersistentCookieJar(storage: FileStorage(dir.path));
+    _cookieJar = PersistCookieJar(storage: FileStorage(dir.path));
   }
 
   CookieJar get cookieJar => _cookieJar;
@@ -53,7 +53,11 @@ class HttpClientWithJar extends http.BaseClient {
     }
     final response = await _inner.send(request);
     if (response.headers.containsKey('set-cookie')) {
-      await cookieJar.saveFromResponse(uri, response.headers['set-cookie']!.map((s) => Cookie.fromSetCookieValue(s)).toList());
+      final setCookieHeaders = response.headers['set-cookie']!;
+      await cookieJar.saveFromResponse(
+        uri,
+        setCookieHeaders.map((s) => Cookie.fromSetCookieValue(s)).toList(),
+      );
     }
     return response;
   }
