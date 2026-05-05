@@ -39,7 +39,7 @@ class _CloudflareSheetState extends State<CloudflareSheet> {
           return {
             'name': c['name']?.toString() ?? '',
             'value': c['value']?.toString() ?? '',
-            'domain': 'lek-manga.net',
+            'domain': 'lekmanga.site',
             'path': '/',
             'httpOnly': 'false',
             'secure': 'true',
