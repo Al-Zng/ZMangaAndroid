@@ -25,7 +25,7 @@ class _ZMangaAppState extends State<ZMangaApp> {
   @override
   void initState() {
     super.initState();
-    // مراقبة الحالة وعرض Cloudflare Sheet عند الحاجة
+    // الاستماع للتغييرات في AppState
     final state = context.read<AppState>();
     state.addListener(_checkCloudflare);
   }
@@ -33,11 +33,12 @@ class _ZMangaAppState extends State<ZMangaApp> {
   void _checkCloudflare() {
     final state = context.read<AppState>();
     if (state.showCloudflareSheet) {
-      // إذا كانت شاشة الكلاودفلير ليست معروضة بالفعل
-      if (Navigator.canPop(context)) return; // تم فتحها بالفعل
+      // تجنب فتح أكثر من نافذة
+      if (ModalRoute.of(context)?.settings.name == '/cloudflare') return;
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => const CloudflareSheet(),
+          settings: const RouteSettings(name: '/cloudflare'),
         ),
       );
     }
