@@ -21,7 +21,7 @@ class ZMangaApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ZTheme.darkTheme,
-      home: const HomeScreen(),
+      home: HomeScreen(),
     );
   }
 }
