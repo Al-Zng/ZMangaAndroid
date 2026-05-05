@@ -15,9 +15,9 @@ dependencies:
   webview_flutter: ^4.4.2
   html: ^0.15.4
   intl: ^0.18.1
-  cookie_jar: ^4.0.8              # ✅ الصحيح بدلاً من persistent_cookie_jar
-  path_provider: ^2.1.1           # ✅ مطلوبة لتحديد مسار التخزين
-  http: ^1.1.0                    # ✅ مضافة لاستخدام العميل المخصص
+  cookie_jar: ^4.0.8
+  path_provider: ^2.1.1
+  http: ^1.1.0
 
 dev_dependencies:
   flutter_test:
