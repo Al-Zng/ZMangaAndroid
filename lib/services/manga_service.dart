@@ -1,21 +1,22 @@
 import 'dart:convert';
-import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 import '../app_state.dart';
 import '../models.dart';
 import 'cookie_service.dart';
 
 class MangaService {
-  static const String baseURL = 'https://lek-manga.net';
+  static const String baseURL = 'https://lekmanga.site';
   static final MangaService _instance = MangaService._internal();
   factory MangaService() => _instance;
   MangaService._internal();
 
+  // ------ جلب HTML الخام ------
   Future<String> fetchHTML(String urlString) async {
     final client = CookieService().client;
     var request = http.Request('GET', Uri.parse(urlString));
-    request.headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
-    request.headers['Referer'] = 'https://lek-manga.net';
+    request.headers['User-Agent'] =
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+    request.headers['Referer'] = 'https://lekmanga.site';
     final streamed = await client.send(request);
     final response = await http.Response.fromStream(streamed);
 
@@ -26,8 +27,7 @@ class MangaService {
           html.contains('Checking your browser') ||
           html.contains('Attention Required')) {
         AppState.current?.triggerCloudflare(urlString);
-        // ✅ لا ترمي استثناء – توقف هنا فقط
-        return '';
+        return ''; // لا نرمي استثناء لتظهر نافذة التحدي
       }
       return html;
     } else {
@@ -35,6 +35,7 @@ class MangaService {
     }
   }
 
+  // ========== دوال الجلب العامة ==========
   Future<List<Manga>> fetchLatest({int page = 1}) async {
     final url = '$baseURL/manga/?m_orderby=latest&page=$page';
     final html = await fetchHTML(url);
@@ -80,10 +81,15 @@ class MangaService {
     return _parseChapterPages(html);
   }
 
-  // ---------- دوال التحليل كما هي ----------
+  // ========== التحليل الداخلي ==========
+  // --- قائمة المانجا (الرئيسية، البحث، إلخ) ---
   List<Manga> _parseMangaList(String html, {required bool extractChapterInfo}) {
     final results = <Manga>[];
-    final cardPattern = RegExp(r'<div class="page-item-detail[^"]*">(.*?)</div>\s*</div>\s*</div>', dotAll: true);
+    // الهيكل الجديد: كل بطاقة مانجا داخل div بالكلاس "c-blog-listing ..."
+    final cardPattern = RegExp(
+      r'<div class="c-blog-listing[^"]*">(.*?)</div>\s*</div>\s*</div>',
+      dotAll: true,
+    );
     for (final match in cardPattern.allMatches(html).take(30)) {
       final block = match.group(1)!;
       var manga = _parseMangaCard(block);
@@ -91,66 +97,83 @@ class MangaService {
         if (_isLogoOnly(manga.coverURL)) continue;
         if (extractChapterInfo) {
           final info = _parseLatestChapterInfo(block);
-          manga = manga.copyWith(latestChapterNumber: info.chapter, lastUpdated: info.time);
+          manga = manga.copyWith(
+            latestChapterNumber: info.chapter,
+            lastUpdated: info.time,
+          );
         }
         results.add(manga);
       }
     }
+    // fallback بسيط
     if (results.isEmpty) {
       results.addAll(_parseMangaSimple(html, extractChapterInfo: extractChapterInfo));
     }
     return results;
   }
 
-  bool _isLogoOnly(String url) =>
-      url.toLowerCase().contains('lekmanga.png') ||
-      url.toLowerCase().contains('-512.png') ||
-      url.toLowerCase().contains('/favicon');
-
   Manga? _parseMangaCard(String block) {
+    // استخراج slug من الرابط
     final slugReg = RegExp(r'href="https?://[^/]+/manga/([^/"]+)/"');
     final slugMatch = slugReg.firstMatch(block);
     if (slugMatch == null) return null;
     final slug = slugMatch.group(1)!;
+
+    // العنوان
     final titleReg = RegExp(r'<(?:h3|h4)[^>]*>\s*<a[^>]*>([^<]+)</a>');
-    final title = titleReg.firstMatch(block)?.group(1) ?? slug.replaceAll('-', ' ').capitalize();
+    final title = titleReg.firstMatch(block)?.group(1) ??
+        slug.replaceAll('-', ' ').capitalize();
+
+    // صورة الغلاف
     final cover = _extractBestImageURL(block);
     if (slug.isEmpty || slug == 'feed' || _isLogoOnly(cover)) return null;
     return Manga(slug: slug, title: _htmlDecode(title), coverURL: cover);
   }
 
+  // --- استخراج الصور من البطاقة (srcset أولاً) ---
   String _extractBestImageURL(String block) {
-    final dataSrcReg = RegExp(r'''<img[^>]+data-src="([^"]+(?:\.jpg|\.jpeg|\.png|\.webp)[^"]*)"[^>]*>''');
-    final match = dataSrcReg.firstMatch(block);
-    if (match != null && !_isLogoOnly(match.group(1)!)) return match.group(1)!;
+    // 1. srcset (يحوي الصور عالية الدقة)
     final srcsetReg = RegExp(r'''<img[^>]+srcset="([^"]+)"[^>]*>''');
     final srcsetMatch = srcsetReg.firstMatch(block);
     if (srcsetMatch != null) {
       final parts = srcsetMatch.group(1)!.split(',');
       for (final p in parts) {
         final candidate = p.trim().split(' ').first;
-        if (candidate.startsWith('http') && _isValidImage(candidate) && !_isLogoOnly(candidate)) return candidate;
+        if (candidate.startsWith('http') &&
+            _isValidImageURL(candidate) &&
+            !_isLogoOnly(candidate)) {
+          return candidate;
+        }
       }
     }
+    // 2. data-src (lazy load)
+    final dataSrcReg = RegExp(r'''<img[^>]+data-src="([^"]+(?:\.jpg|\.jpeg|\.png|\.webp)[^"]*)"[^>]*>''');
+    final dataSrcMatch = dataSrcReg.firstMatch(block);
+    if (dataSrcMatch != null && !_isLogoOnly(dataSrcMatch.group(1)!)) {
+      return dataSrcMatch.group(1)!;
+    }
+    // 3. src عادي
     final srcReg = RegExp(r'''<img[^>]+src="([^"]+(?:\.jpg|\.jpeg|\.png|\.webp)[^"]*)"[^>]*>''');
     final srcMatch = srcReg.firstMatch(block);
-    if (srcMatch != null && !_isLogoOnly(srcMatch.group(1)!)) return srcMatch.group(1)!;
+    if (srcMatch != null && !_isLogoOnly(srcMatch.group(1)!)) {
+      return srcMatch.group(1)!;
+    }
     return '';
   }
 
-  bool _isValidImage(String url) =>
-      url.startsWith('http') && ['jpg', 'jpeg', 'png', 'webp'].any((ext) => url.toLowerCase().contains('.$ext'));
-
+  // --- تحليل بسيط احتياطي ---
   List<Manga> _parseMangaSimple(String html, {required bool extractChapterInfo}) {
     final results = <Manga>[];
     final linkPattern = RegExp(r'''href="(https?://[^/]+/manga/([^/"]+)/)">?\s*(?:<[^>]+>\s*)*([^<]{3,})"''');
     for (final m in linkPattern.allMatches(html)) {
       final slug = m.group(2)!;
       final rawTitle = m.group(3)!.trim();
-      if (slug.isEmpty || rawTitle.isEmpty || rawTitle.length > 200 || slug == 'feed' || slug.contains('cdn-cgi')) continue;
+      if (slug.isEmpty || rawTitle.isEmpty || rawTitle.length > 200 ||
+          slug == 'feed' || slug.contains('cdn-cgi')) continue;
       if (results.any((r) => r.slug == slug)) continue;
       final cover = _extractBestImageURL(html);
-      var manga = Manga(slug: slug, title: _htmlDecode(rawTitle), coverURL: _isLogoOnly(cover) ? '' : cover);
+      var manga = Manga(slug: slug, title: _htmlDecode(rawTitle),
+                        coverURL: _isLogoOnly(cover) ? '' : cover);
       if (extractChapterInfo) {
         final info = _parseLatestChapterInfo(html);
         manga = manga.copyWith(latestChapterNumber: info.chapter, lastUpdated: info.time);
@@ -160,7 +183,9 @@ class MangaService {
     return results;
   }
 
+  // --- معلومات آخر فصل في القائمة ---
   _ChapterInfo _parseLatestChapterInfo(String block) {
+    // يبحث عن رابط chapter ويأخذ الرقم
     final chReg = RegExp(r'''<a[^>]+href="[^"]*chapter[^"]*"[^>]*>Chapter\s*([^<]+)</a>''');
     final timeReg = RegExp(r'''<span[^>]+class="[^"]*font-meta[^"]*"[^>]*>([^<]+)</span>''');
     final chapter = chReg.firstMatch(block)?.group(1)?.trim();
@@ -168,6 +193,7 @@ class MangaService {
     return _ChapterInfo(chapter, time);
   }
 
+  // ========== تفاصيل مانجا واحدة ==========
   Manga _parseMangaDetail(String html, String slug) {
     final titleReg = RegExp(r'''<div class="post-title"[^>]*>\s*<h1[^>]*>\s*([^<]+)''');
     final title = titleReg.firstMatch(html)?.group(1) ?? slug.replaceAll('-', ' ');
@@ -187,22 +213,33 @@ class MangaService {
     final genreReg = RegExp(r'''/manga-genre/[^/]+/">([^<]+)</a>''');
     genreReg.allMatches(html).forEach((m) => genres.add(m.group(1)!));
 
+    // --- استخراج الفصول (الهيكل الجديد) ---
     final chapters = <Chapter>[];
-    final chapLinkReg = RegExp(r'''href="https?://[^/]+/manga/[^/]+/([^/"]+)/"[^>]*>\s*(?:<[^>]*>\s*)*(?:Chapter|الفصل)\s*([\d.]+)''', caseSensitive: false, dotAll: true);
-    for (final m in chapLinkReg.allMatches(html)) {
-      final cSlug = m.group(1)!;
-      final cNum = m.group(2)!;
-      if (!chapters.any((c) => c.slug == cSlug)) chapters.add(Chapter(slug: cSlug, number: cNum));
-    }
-    if (chapters.isEmpty) {
-      final fallbackReg = RegExp(r'''href="https?://[^/]+/manga/[^/]+/(\d+(?:-\d+)?)/"[^>]*>''');
-      for (final m in fallbackReg.allMatches(html)) {
-        final cSlug = m.group(1)!;
-        final num = cSlug.replaceAll(RegExp(r'\D'), '');
-        if (!chapters.any((c) => c.slug == cSlug)) chapters.add(Chapter(slug: cSlug, number: num));
+    // <li class="wp-manga-chapter"> يحتوي على رابط مثل /manga/slug/رقم/
+    final chapterReg = RegExp(
+      r'<li class="wp-manga-chapter">\s*<a href="[^"]+/(\d+)/"[^>]*>\s*(\d+)\s*</a>',
+      dotAll: true,
+    );
+    for (final match in chapterReg.allMatches(html)) {
+      final number = match.group(2)!;
+      final slug = match.group(1)!; // slug الفصل هو رقمه فقط
+      if (!chapters.any((c) => c.slug == slug)) {
+        chapters.add(Chapter(slug: slug, number: number));
       }
     }
-    chapters.sort((a, b) => (double.tryParse(b.number) ?? 0).compareTo(double.tryParse(a.number) ?? 0));
+    // fallback: أي روابط تنتهي برقم
+    if (chapters.isEmpty) {
+      final fallbackReg = RegExp(r'href="[^"]+/(\d+)/"[^>]*>\1</a>');
+      for (final match in fallbackReg.allMatches(html)) {
+        final num = match.group(1)!;
+        if (!chapters.any((c) => c.slug == num)) {
+          chapters.add(Chapter(slug: num, number: num));
+        }
+      }
+    }
+    chapters.sort((a, b) => (double.tryParse(b.number) ?? 0)
+        .compareTo(double.tryParse(a.number) ?? 0));
+
     return Manga(
       slug: slug,
       title: _htmlDecode(title),
@@ -216,6 +253,7 @@ class MangaService {
     );
   }
 
+  // ========== صور الفصل ==========
   List<String> _parseChapterPages(String html) {
     final readerBlockPatterns = [
       r'''<div[^>]+class="[^"]*reading-content[^"]*"[^>]*>(.*?)</div>\s*</div>''',
@@ -225,7 +263,10 @@ class MangaService {
     String? readerBlock;
     for (final pat in readerBlockPatterns) {
       final r = RegExp(pat, dotAll: true).firstMatch(html);
-      if (r != null && r.group(1)!.length > 100) { readerBlock = r.group(1)!; break; }
+      if (r != null && r.group(1)!.length > 100) {
+        readerBlock = r.group(1)!;
+        break;
+      }
     }
     final searchArea = readerBlock ?? html;
 
@@ -255,12 +296,27 @@ class MangaService {
   bool _isChapterImageURL(String url) {
     if (!url.startsWith('http') || url.contains('data:image')) return false;
     final lower = url.toLowerCase();
-    const blocked = ['lekmanga.png', '-512.png', '/favicon', 'logo', 'banner', 'icon', 'avatar', 'gravatar', 'placeholder', 'ads', 'ad-'];
+    const blocked = [
+      'lekmanga.png', '-512.png', '/favicon', 'logo', 'banner',
+      'icon', 'avatar', 'gravatar', 'placeholder', 'ads', 'ad-'
+    ];
     if (blocked.any(lower.contains)) return false;
     return ['.jpg', '.jpeg', '.png', '.webp'].any(lower.contains);
   }
 
-  String stripHTML(String html) => html.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+  // ========== أدوات مساعدة ==========
+  bool _isLogoOnly(String url) =>
+      url.toLowerCase().contains('lekmanga.png') ||
+      url.toLowerCase().contains('-512.png') ||
+      url.toLowerCase().contains('/favicon');
+
+  bool _isValidImageURL(String url) =>
+      url.startsWith('http') &&
+      ['.jpg', '.jpeg', '.png', '.webp'].any(url.toLowerCase().contains);
+
+  String stripHTML(String html) =>
+      html.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+
   String _htmlDecode(String str) => str
       .replaceAll('&amp;', '&')
       .replaceAll('&lt;', '<')
@@ -270,6 +326,7 @@ class MangaService {
       .replaceAll('&nbsp;', ' ');
 }
 
+// ---- نماذج داخلية ----
 class _ChapterInfo {
   final String? chapter;
   final String? time;
