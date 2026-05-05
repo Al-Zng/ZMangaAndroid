@@ -58,29 +58,31 @@ class _CloudflareSheetState extends State<CloudflareSheet> {
     final store = context.read<AppState>();
     store.dismissCloudflare();
     store.triggerReload();
+    // إغلاق النافذة بالقوة
+    if (Navigator.canPop(context)) {
+      Navigator.of(context).pop();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: ZTheme.bg,
-      appBar: AppBar(
-        backgroundColor: ZTheme.surface,
-        title: const Text('Security Check'),
-        leading: TextButton(
-          onPressed: () {
-            context.read<AppState>().dismissCloudflare();
-          },
-          child: const Text('Cancel'),
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: ZTheme.bg,
+        appBar: AppBar(
+          backgroundColor: ZTheme.surface,
+          title: const Text('Security Check'),
+          automaticallyImplyLeading: false,
+          actions: [
+            TextButton(
+              onPressed: _onDone,
+              child: const Text('Done', style: TextStyle(color: ZTheme.accent)),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: _onDone,
-            child: const Text('Done'),
-          ),
-        ],
+        body: WebViewWidget(controller: _controller),
       ),
-      body: WebViewWidget(controller: _controller),
     );
   }
 }
