@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'screen/home_screen.dart';
-import 'screen/cloudflare_sheet.dart';
 import 'theme.dart';
 
 void main() {
@@ -14,35 +13,8 @@ void main() {
   );
 }
 
-class ZMangaApp extends StatefulWidget {
+class ZMangaApp extends StatelessWidget {
   const ZMangaApp({super.key});
-
-  @override
-  State<ZMangaApp> createState() => _ZMangaAppState();
-}
-
-class _ZMangaAppState extends State<ZMangaApp> {
-  @override
-  void initState() {
-    super.initState();
-    // الاستماع للتغييرات في AppState
-    final state = context.read<AppState>();
-    state.addListener(_checkCloudflare);
-  }
-
-  void _checkCloudflare() {
-    final state = context.read<AppState>();
-    if (state.showCloudflareSheet) {
-      // تجنب فتح أكثر من نافذة
-      if (ModalRoute.of(context)?.settings.name == '/cloudflare') return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const CloudflareSheet(),
-          settings: const RouteSettings(name: '/cloudflare'),
-        ),
-      );
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
