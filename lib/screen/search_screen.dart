@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import '../models.dart';
 import '../services/manga_service.dart';
+import '../widgets/cached_image.dart';   // ✅ استيراد الويدجت
 import 'manga_detail_screen.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -28,7 +29,7 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  void _search({bool reset = true}) async {
+  Future<void> _search({bool reset = true}) async {   // ✅ غيرنا إلى Future<void>
     final query = _controller.text.trim();
     if (query.isEmpty && selectedGenre == null) return;
     if (reset) { page = 1; hasMore = true; results.clear(); setState(() => isLoading = true); }
@@ -53,7 +54,9 @@ class _SearchScreenState extends State<SearchScreen> {
     if (loadingMore || !hasMore) return;
     setState(() => loadingMore = true);
     page++;
-    _search(reset: false).then((_) => setState(() => loadingMore = false));
+    _search(reset: false).then((_) {    // ✅ الآن تعمل لأن _search ترجع Future
+      setState(() => loadingMore = false);
+    });
   }
 
   @override
@@ -111,7 +114,7 @@ class _SearchScreenState extends State<SearchScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           children: [
             _pill('All', selected: selectedGenre == null, onTap: () { selectedGenre = null; results.clear(); setState(() {}); }),
-            ...genres.map((g) => _pill(g, selected: selectedGenre == g, onTap: () { selectedGenre = g; results.clear(); setState(() => _search()); })),
+            ...genres.map((g) => _pill(g, selected: selectedGenre == g, onTap: () { selectedGenre = g; results.clear(); _search(); })),
           ],
         ),
       );
@@ -149,7 +152,7 @@ class _SearchScreenState extends State<SearchScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(12), child: CachedMangaImage(url: m.highQualityCoverURL))),
+                  Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(12), child: CachedMangaImage(url: m.highQualityCoverURL))), // ✅ معرف الآن
                   Text(m.title, maxLines: 2, style: const TextStyle(fontSize: 11, color: ZTheme.textPrimary)),
                 ],
               ),
