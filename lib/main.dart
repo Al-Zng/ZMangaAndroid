@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
-import 'screen/home_screen.dart';
-import 'screen/cloudflare_sheet.dart';
+import 'screen/main_shell.dart';
 import 'theme.dart';
 
 void main() {
@@ -22,25 +21,40 @@ class ZMangaApp extends StatefulWidget {
 }
 
 class _ZMangaAppState extends State<ZMangaApp> {
+  bool _cloudflareOpen = false;
+
   @override
   void initState() {
     super.initState();
-    final state = context.read<AppState>();
-    state.addListener(_checkCloudflare);
+    // تسجيل المستمع بعد أن يصبح الـ context جاهزاً للـ navigation
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = context.read<AppState>();
+      state.addListener(_checkCloudflare);
+    });
+  }
+
+  @override
+  void dispose() {
+    context.read<AppState>().removeListener(_checkCloudflare);
+    super.dispose();
   }
 
   void _checkCloudflare() {
     final state = context.read<AppState>();
-    if (state.showCloudflareSheet) {
-      // تجنب فتح أكثر من نافذة
-      if (ModalRoute.of(context)?.settings.name == '/cloudflare') return;
+    if (!state.showCloudflareSheet || _cloudflareOpen) return;
+    _cloudflareOpen = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => const CloudflareSheet(),
           settings: const RouteSettings(name: '/cloudflare'),
         ),
-      );
-    }
+      ).then((_) {
+        _cloudflareOpen = false;
+      });
+    });
   }
 
   @override
@@ -48,7 +62,7 @@ class _ZMangaAppState extends State<ZMangaApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ZTheme.darkTheme,
-      home: const HomeScreen(),
+      home: const MainShell(),   // ✅ الشاشة الرئيسية الجديدة مع الـ Bottom Nav
     );
   }
 }
