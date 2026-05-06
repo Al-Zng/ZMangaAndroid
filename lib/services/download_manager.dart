@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -7,9 +8,8 @@ import '../models/models.dart';
 import 'manga_service.dart';
 
 class DownloadManager {
-  static final DownloadManager _instance = DownloadManager._internal();
-  factory DownloadManager() => _instance;
-  DownloadManager._internal();
+  static final DownloadManager shared = DownloadManager._();
+  DownloadManager._();
 
   Map<String, DownloadedChapter> _downloads = {};
   Map<String, double> _activeDownloads = {};
@@ -67,7 +67,7 @@ class DownloadManager {
         await file.writeAsBytes(bytes.expand((e) => e).toList());
         localPaths.add(file.path);
       } catch (_) {
-        localPaths.add(url); // fallback
+        localPaths.add(url);
       }
       _activeDownloads[key] = (i + 1) / urls.length;
     }
@@ -124,9 +124,8 @@ class DownloadManager {
   }
 
   void _load() {
-    final prefs = SharedPreferences.getInstance();
-    prefs.then((pref) {
-      final jsonStr = pref.getString(_key);
+    SharedPreferences.getInstance().then((prefs) {
+      final jsonStr = prefs.getString(_key);
       if (jsonStr != null) {
         final Map<String, dynamic> map = jsonDecode(jsonStr);
         _downloads = map.map((k, v) => MapEntry(k, DownloadedChapter.fromJson(v)));
