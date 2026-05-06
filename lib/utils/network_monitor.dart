@@ -3,19 +3,18 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 
 class NetworkMonitor extends ChangeNotifier {
-  static final NetworkMonitor _instance = NetworkMonitor._internal();
-  factory NetworkMonitor() => _instance;
-  NetworkMonitor._internal();
+  static final NetworkMonitor shared = NetworkMonitor._();
+  NetworkMonitor._();
 
   final Connectivity _connectivity = Connectivity();
   bool _isConnected = true;
   bool get isConnected => _isConnected;
 
-  StreamSubscription<List<ConnectivityResult>>? _subscription;
+  StreamSubscription<ConnectivityResult>? _subscription;
 
   NetworkMonitor() {
-    _subscription = _connectivity.onConnectivityChanged.listen((results) {
-      final connected = results.isNotEmpty && results.first != ConnectivityResult.none;
+    _subscription = _connectivity.onConnectivityChanged.listen((result) {
+      final connected = result != ConnectivityResult.none;
       if (connected != _isConnected) {
         _isConnected = connected;
         notifyListeners();
