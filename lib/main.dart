@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'app_state.dart';
+import 'state/app_state.dart';
 import 'screen/main_shell.dart';
-import 'theme.dart';
+import 'theme/app_theme.dart';
+import 'utils/network_monitor.dart';
 
 void main() {
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AppState(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppState()),
+        ChangeNotifierProvider(create: (_) => NetworkMonitor()),
+      ],
       child: const ZMangaApp(),
     ),
   );
@@ -20,7 +24,7 @@ class ZMangaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ZTheme.darkTheme,
+      theme: AppTheme.darkTheme,
       home: const MainShell(),
     );
   }
