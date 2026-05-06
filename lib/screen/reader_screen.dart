@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../app_state.dart';
-import '../theme.dart';
-import '../models.dart';
+import '../state/app_state.dart';
+import '../theme/app_theme.dart';
+import '../models/models.dart';
 import '../widgets/cached_image.dart';
 import '../services/manga_service.dart';
 
@@ -10,7 +10,17 @@ class ReaderScreen extends StatefulWidget {
   final Manga manga;
   final Chapter chapter;
   final List<Chapter> allChapters;
-  const ReaderScreen({Key? key, required this.manga, required this.chapter, required this.allChapters}) : super(key: key);
+  final int initialPage;
+  final List<String>? preloadedPages;
+
+  const ReaderScreen({
+    Key? key,
+    required this.manga,
+    required this.chapter,
+    required this.allChapters,
+    this.initialPage = 0,
+    this.preloadedPages,
+  }) : super(key: key);
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -22,6 +32,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   List<_ChapterBoundary> chapterBoundaries = [];
   Set<String> loadedChapters = {};
   bool isLoading = true;
+  double loadingProgress = 0;
+  int loadedPagesCount = 0;
+  int totalPages = 0;
   bool loadingNext = false;
   String? error;
   bool showUI = true;
@@ -38,12 +51,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _loadInitial() async {
     setState(() { isLoading = true; error = null; });
     try {
-      final urls = await _service.fetchChapterPages(widget.manga.slug, widget.chapter.slug);
+      List<String> urls;
+      if (widget.preloadedPages != null) {
+        urls = widget.preloadedPages!;
+      } else {
+        urls = await _service.fetchChapterPages(widget.manga.slug, widget.chapter.slug);
+      }
+      totalPages = urls.length;
+      // محاكاة تحميل الصفحات (اختياري)
+      for (int i = 0; i < urls.length; i++) {
+        await Future.delayed(const Duration(milliseconds: 10));
+        setState(() {
+          loadedPagesCount = i + 1;
+          loadingProgress = loadedPagesCount / totalPages;
+        });
+      }
       setState(() {
         allPages = urls.map((u) => _PageEntry(widget.chapter.slug, u)).toList();
         chapterBoundaries = [_ChapterBoundary(widget.chapter.slug, 0)];
         loadedChapters = {widget.chapter.slug};
         isLoading = false;
+        currentPage = widget.initialPage.clamp(0, allPages.length - 1);
       });
     } catch (e) {
       setState(() { error = e.toString(); isLoading = false; });
@@ -83,11 +111,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     String chSlug = widget.chapter.slug;
     int boundaryStart = 0;
     for (final b in chapterBoundaries.reversed) {
-      if (pageIdx >= b.startIndex) {
-        chSlug = b.slug;
-        boundaryStart = b.startIndex;
-        break;
-      }
+      if (pageIdx >= b.startIndex) { chSlug = b.slug; boundaryStart = b.startIndex; break; }
     }
     final chNum = widget.manga.chapters.firstWhere((c) => c.slug == chSlug, orElse: () => widget.chapter).number;
     final localIdx = pageIdx - boundaryStart;
@@ -102,18 +126,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     context.read<AppState>().saveProgress(progress);
   }
 
-  String get currentChapterNumber {
-    for (final b in chapterBoundaries.reversed) {
-      if (currentPage >= b.startIndex) {
-        return widget.manga.chapters.firstWhere((c) => c.slug == b.slug, orElse: () => widget.chapter).number;
-      }
-    }
-    return widget.chapter.number;
-  }
-
-  void _toggleUI() {
-    setState(() { showUI = !showUI; });
-  }
+  void _toggleUI() => setState(() => showUI = !showUI);
 
   @override
   Widget build(BuildContext context) {
@@ -122,41 +135,67 @@ class _ReaderScreenState extends State<ReaderScreen> {
       body: Stack(
         children: [
           if (isLoading && allPages.isEmpty)
-            const Center(child: CircularProgressIndicator(color: ZTheme.accent))
-          else if (error != null && allPages.isEmpty)
-            Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.warning_amber, color: ZTheme.danger, size: 44),
-              Text(error!, style: const TextStyle(color: Colors.white54)),
-              const SizedBox(height: 12),
-              ElevatedButton(onPressed: _loadInitial, child: const Text('Retry')),
-            ]))
+            Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const CircularProgressIndicator(color: AppTheme.accent),
+                const SizedBox(height: 16),
+                if (totalPages > 0)
+                  Column(children: [
+                    LinearProgressIndicator(value: loadingProgress, color: AppTheme.accent),
+                    const SizedBox(height: 8),
+                    Text('$loadedPagesCount / $totalPages pages', style: const TextStyle(color: AppTheme.textSecondary)),
+                  ]),
+              ]),
+            )
+          else if (error != null)
+            Center(child: Text(error!, style: const TextStyle(color: Colors.white54)))
           else if (allPages.isEmpty)
             const Center(child: Text('No pages', style: TextStyle(color: Colors.white54)))
           else
             GestureDetector(
               onTap: _toggleUI,
-              child: ListView.builder(
+              child: PageView.builder(
+                scrollDirection: Axis.vertical,
                 itemCount: allPages.length + (loadingNext ? 1 : 0),
+                controller: PageController(initialPage: widget.initialPage),
+                onPageChanged: _updateCurrentPage,
                 itemBuilder: (_, idx) {
                   if (idx < allPages.length) {
                     if (chapterBoundaries.any((b) => b.startIndex == idx) && idx > 0) {
                       final num = widget.manga.chapters.firstWhere((c) => c.slug == chapterBoundaries.firstWhere((b) => b.startIndex == idx).slug).number;
                       return Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           _chapterSeparator(num),
-                          _pageItem(idx),
+                          Expanded(child: _pageItem(idx)),
                         ],
                       );
                     }
                     return _pageItem(idx);
-                  } else {
-                    return const SizedBox(height: 80, child: Center(child: CircularProgressIndicator(color: ZTheme.accent)));
                   }
+                  return const Center(child: CircularProgressIndicator(color: AppTheme.accent));
                 },
               ),
             ),
-          if (showUI) _topBar(),
-          if (showUI) _bottomBar(),
+          // Top bar
+          if (showUI && !isLoading && allPages.isNotEmpty)
+            Positioned(
+              top: 0, left: 0, right: 0,
+              child: Container(
+                padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 8, left: 48, right: 16, bottom: 14),
+                decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+                child: Row(children: [
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(widget.manga.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+                      Text('Chapter $currentChNum', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                    ]),
+                  ),
+                  Text('${currentPage + 1} / ${allPages.length}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                ]),
+              ),
+            ),
+          // Close button
           SafeArea(
             child: Align(
               alignment: Alignment.topLeft,
@@ -171,65 +210,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  Widget _pageItem(int idx) {
-    final entry = allPages[idx];
-    return CachedMangaImage(url: entry.url, fit: BoxFit.fitWidth);
+  String get currentChNum {
+    for (final b in chapterBoundaries.reversed) {
+      if (currentPage >= b.startIndex) {
+        return widget.manga.chapters.firstWhere((c) => c.slug == b.slug, orElse: () => widget.chapter).number;
+      }
+    }
+    return widget.chapter.number;
   }
 
-  Widget _chapterSeparator(String number) => Padding(
+  Widget _pageItem(int idx) => CachedMangaImage(url: allPages[idx].url, fit: BoxFit.fitWidth);
+
+  Widget _chapterSeparator(String number) => Container(
         padding: const EdgeInsets.symmetric(vertical: 20),
         child: Row(children: [
           Expanded(child: Container(height: 1, color: Colors.white12)),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: ZTheme.accent.withOpacity(0.1),
-              border: Border.all(color: ZTheme.accent.withOpacity(0.3)),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text('Chapter $number', style: const TextStyle(color: ZTheme.accent, fontSize: 12, fontWeight: FontWeight.w600)),
+            decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.1), border: Border.all(color: AppTheme.accent.withOpacity(0.3)), borderRadius: BorderRadius.circular(20)),
+            child: Text('Chapter $number', style: const TextStyle(color: AppTheme.accent, fontSize: 12, fontWeight: FontWeight.w600)),
           ),
           Expanded(child: Container(height: 1, color: Colors.white12)),
         ]),
-      );
-
-  Widget _topBar() => Positioned(
-        top: 0, left: 0, right: 0,
-        child: Container(
-          padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 8, left: 48, right: 16, bottom: 14),
-          decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(widget.manga.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-                    Text('Chapter $currentChapterNumber', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                  ],
-                ),
-              ),
-              if (allPages.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
-                  child: Text('$currentPage / ${allPages.length}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                ),
-            ],
-          ),
-        ),
-      );
-
-  Widget _bottomBar() => Positioned(
-        bottom: 0, left: 0, right: 0,
-        child: Container(
-          height: 3,
-          child: LinearProgressIndicator(
-            value: allPages.isNotEmpty ? (currentPage + 1) / allPages.length : 0,
-            backgroundColor: Colors.white12,
-            valueColor: const AlwaysStoppedAnimation<Color>(ZTheme.accent),
-          ),
-        ),
       );
 }
 
