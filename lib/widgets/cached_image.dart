@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import '../theme.dart';
+import '../theme/app_theme.dart';
 
 class CachedMangaImage extends StatelessWidget {
   final String? url;
@@ -18,7 +18,7 @@ class CachedMangaImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (url == null || url!.isEmpty || url!.toLowerCase().contains('lekmanga.png') || url!.contains('-512.png')) {
+    if (url == null || url!.isEmpty || url!.contains('lekmanga.png') || url!.contains('-512.png')) {
       return _placeholder();
     }
     return CachedNetworkImage(
@@ -33,7 +33,7 @@ class CachedMangaImage extends StatelessWidget {
   }
 
   Widget _placeholder() => Container(
-        color: ZTheme.card,
-        child: Center(child: Icon(Icons.image, color: ZTheme.textTertiary)),
+        color: AppTheme.card,
+        child: Center(child: Icon(Icons.image, color: AppTheme.textTertiary)),
       );
 }
