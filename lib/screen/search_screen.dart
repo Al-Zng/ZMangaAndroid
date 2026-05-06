@@ -137,9 +137,19 @@ class _SearchScreenState extends State<SearchScreen> {
             child: isLoading && results.isEmpty
                 ? const Center(child: CircularProgressIndicator(color: AppTheme.accent))
                 : results.isEmpty && _controller.text.isNotEmpty
-                    ? Center(child: Text('No results for "${_controller.text}"', style: const TextStyle(color: AppTheme.textSecondary)))
+                    ? Center(
+                        child: Text(
+                          'No results for "${_controller.text}"',
+                          style: const TextStyle(color: AppTheme.textSecondary),
+                        ),
+                      )
                     : results.isEmpty
-                        ? const Center(child: Text('Search or browse by genre', style: TextStyle(color: AppTheme.textSecondary)))
+                        ? const Center(
+                            child: Text(
+                              'Search or browse by genre',
+                              style: TextStyle(color: AppTheme.textSecondary),
+                            ),
+                          )
                         : GridView.builder(
                             padding: const EdgeInsets.all(12),
                             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -151,7 +161,9 @@ class _SearchScreenState extends State<SearchScreen> {
                             itemCount: results.length + (loadingMore ? 1 : 0),
                             itemBuilder: (_, i) {
                               if (i >= results.length) {
-                                return const Center(child: CircularProgressIndicator(color: AppTheme.accent));
+                                return const Center(
+                                  child: CircularProgressIndicator(color: AppTheme.accent),
+                                );
                               }
                               final m = results[i];
                               return GestureDetector(
@@ -174,7 +186,14 @@ class _SearchScreenState extends State<SearchScreen> {
                                         child: CachedMangaImage(url: m.highQualityCoverURL),
                                       ),
                                     ),
-                                    Text(m.title, maxLines: 2, style: const TextStyle(fontSize: 11, color: AppTheme.textPrimary)),
+                                    Text(
+                                      m.title,
+                                      maxLines: 2,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppTheme.textPrimary,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               );
