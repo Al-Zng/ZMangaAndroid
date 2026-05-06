@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import '../app_state.dart';
+import '../state/app_state.dart';
 import '../services/cookie_service.dart';
-import '../theme.dart';
+import '../theme/app_theme.dart';
 
 class CloudflareSheet extends StatefulWidget {
   const CloudflareSheet({super.key});
@@ -58,10 +58,7 @@ class _CloudflareSheetState extends State<CloudflareSheet> {
     final store = context.read<AppState>();
     store.dismissCloudflare();
     store.triggerReload();
-    // إغلاق النافذة بالقوة
-    if (Navigator.canPop(context)) {
-      Navigator.of(context).pop();
-    }
+    if (Navigator.canPop(context)) Navigator.of(context).pop();
   }
 
   @override
@@ -69,15 +66,15 @@ class _CloudflareSheetState extends State<CloudflareSheet> {
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: ZTheme.bg,
+        backgroundColor: AppTheme.bg,
         appBar: AppBar(
-          backgroundColor: ZTheme.surface,
+          backgroundColor: AppTheme.surface,
           title: const Text('Security Check'),
           automaticallyImplyLeading: false,
           actions: [
             TextButton(
               onPressed: _onDone,
-              child: const Text('Done', style: TextStyle(color: ZTheme.accent)),
+              child: const Text('Done', style: TextStyle(color: AppTheme.accent)),
             ),
           ],
         ),
