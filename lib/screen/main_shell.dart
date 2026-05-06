@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../app_state.dart';
-import '../theme.dart';
+import '../state/app_state.dart';
+import '../theme/app_theme.dart';
 import 'home_screen.dart';
 import 'search_screen.dart';
 import 'library_screen.dart';
+import 'downloads_screen.dart';
 import 'history_screen.dart';
 import 'cloudflare_sheet.dart';
 
@@ -23,6 +24,7 @@ class _MainShellState extends State<MainShell> {
     HomeScreen(),
     SearchScreen(),
     LibraryScreen(),
+    DownloadsScreen(),
     HistoryScreen(),
   ];
 
@@ -61,24 +63,25 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZTheme.bg,
+      backgroundColor: AppTheme.bg,
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _tabs,
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
-        backgroundColor: ZTheme.surface,
-        selectedItemColor: ZTheme.accent,
-        unselectedItemColor: ZTheme.textTertiary,
+        backgroundColor: AppTheme.surface,
+        selectedItemColor: AppTheme.accent,
+        unselectedItemColor: AppTheme.textTertiary,
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
           BottomNavigationBarItem(icon: Icon(Icons.library_books), label: 'Library'),
+          BottomNavigationBarItem(icon: Icon(Icons.download), label: 'Downloads'),
           BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
         ],
-      ),
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _tabs,
       ),
     );
   }
