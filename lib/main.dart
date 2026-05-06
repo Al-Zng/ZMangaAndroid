@@ -10,7 +10,7 @@ void main() {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppState()),
-        ChangeNotifierProvider(create: (_) => NetworkMonitor()),
+        ChangeNotifierProvider(create: (_) => NetworkMonitor.shared),
       ],
       child: const ZMangaApp(),
     ),
