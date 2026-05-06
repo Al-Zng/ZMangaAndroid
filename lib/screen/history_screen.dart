@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../app_state.dart';
-import '../theme.dart';
-import '../models.dart';
+import '../state/app_state.dart';
+import '../theme/app_theme.dart';
+import '../models/models.dart';
 import '../widgets/cached_image.dart';
 import 'manga_detail_screen.dart';
 
@@ -14,47 +14,63 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  bool _showClearDialog = false;
+  bool _showClearAlert = false;
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppState>();
     return Scaffold(
-      backgroundColor: ZTheme.bg,
+      backgroundColor: AppTheme.bg,
       appBar: AppBar(
-        title: const Text('History', style: TextStyle(color: ZTheme.textPrimary)),
-        backgroundColor: ZTheme.surface,
+        backgroundColor: AppTheme.surface,
+        title: const Text('History', style: TextStyle(color: AppTheme.textPrimary)),
         actions: [
           if (store.history.isNotEmpty)
-            IconButton(icon: const Icon(Icons.delete, color: ZTheme.danger), onPressed: () => setState(() => _showClearDialog = true)),
+            IconButton(
+              icon: const Icon(Icons.delete_sweep, color: AppTheme.danger),
+              onPressed: () => setState(() => _showClearAlert = true),
+            ),
         ],
       ),
       body: store.history.isEmpty
-          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.schedule, size: 48, color: ZTheme.textTertiary),
-              const SizedBox(height: 12),
-              const Text('No reading history', style: TextStyle(color: ZTheme.textSecondary)),
-              const Text('Manga you read will appear here', style: TextStyle(color: ZTheme.textTertiary, fontSize: 13)),
-            ]))
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.schedule, size: 48, color: AppTheme.textTertiary),
+                  SizedBox(height: 12),
+                  Text('No reading history', style: TextStyle(color: AppTheme.textSecondary)),
+                  Text('Manga you read will appear here', style: TextStyle(color: AppTheme.textTertiary, fontSize: 13)),
+                ],
+              ),
+            )
           : ListView.builder(
               itemCount: store.history.length,
               itemBuilder: (_, i) {
                 final p = store.history[i];
                 return ListTile(
-                  leading: ClipRRect(borderRadius: BorderRadius.circular(8), child: CachedMangaImage(url: p.mangaCover, width: 50, height: 70)),
-                  title: Text(p.mangaTitle, style: const TextStyle(color: ZTheme.textPrimary, fontWeight: FontWeight.w600)),
+                  leading: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: CachedMangaImage(url: p.mangaCover, width: 50, height: 70),
+                  ),
+                  title: Text(p.mangaTitle, style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(children: [
-                        Text('Ch.${p.chapterNumber}', style: const TextStyle(color: ZTheme.accent)),
-                        Text(' · Page ${p.pageIndex + 1}', style: const TextStyle(color: ZTheme.textSecondary)), // ✅ إزالة const من النص المتغير
+                        Text('Ch. ${p.chapterNumber}', style: const TextStyle(color: AppTheme.accent)),
+                        Text(' · Page ${p.pageIndex + 1}', style: const TextStyle(color: AppTheme.textSecondary)),
                       ]),
-                      Text(_timeAgo(p.lastRead), style: const TextStyle(color: ZTheme.textTertiary, fontSize: 11)),
+                      Text(_timeAgo(p.lastRead), style: const TextStyle(color: AppTheme.textTertiary, fontSize: 11)),
                     ],
                   ),
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MangaDetailScreen(slug: p.mangaSlug, preloadTitle: p.mangaTitle, preloadCover: p.mangaCover))),
-                  trailing: const Icon(Icons.chevron_right, color: ZTheme.textTertiary),
+                  trailing: const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MangaDetailScreen(slug: p.mangaSlug, preloadTitle: p.mangaTitle, preloadCover: p.mangaCover),
+                    ),
+                  ),
                 );
               },
             ),
