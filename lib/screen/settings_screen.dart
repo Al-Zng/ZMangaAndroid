@@ -19,7 +19,7 @@ class SettingsScreen extends StatelessWidget {
           _section('Reading', [
             SwitchListTile(
               title: const Text('Auto-load next chapter', style: TextStyle(color: AppTheme.textPrimary)),
-              value: true, // يمكن ربطه بـ shared prefs لاحقاً
+              value: true,
               onChanged: (val) {},
               activeColor: AppTheme.accent,
               secondary: const Icon(Icons.auto_stories, color: AppTheme.textSecondary),
@@ -29,7 +29,7 @@ class SettingsScreen extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.cached, color: AppTheme.textSecondary),
               title: const Text('Image Cache', style: TextStyle(color: AppTheme.textPrimary)),
-              trailing: Text(_formatBytes(0), style: const TextStyle(color: AppTheme.textSecondary)), // يمكن حساب الحجم الحقيقي
+              trailing: Text(_formatBytes(0), style: const TextStyle(color: AppTheme.textSecondary)),
             ),
             ListTile(
               leading: const Icon(Icons.download, color: AppTheme.textSecondary),
@@ -44,7 +44,7 @@ class SettingsScreen extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.delete_forever, color: AppTheme.danger),
               title: const Text('Delete All Downloads', style: TextStyle(color: AppTheme.danger)),
-              onTap: () => DownloadManager().removeAllDownloads(),
+              onTap: () => DownloadManager.shared.removeAllDownloads(), // ✅
             ),
           ]),
           _section('About', [
@@ -73,5 +73,5 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  String _formatBytes(int bytes) => '0 KB'; // اختياري: حساب حقيقي
+  String _formatBytes(int bytes) => '0 KB';
 }
