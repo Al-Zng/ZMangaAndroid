@@ -14,7 +14,7 @@ class DownloadsScreen extends StatefulWidget {
 }
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
-  final DownloadManager dm = DownloadManager();
+  final DownloadManager dm = Download Manager.shared; // ✅ استخدم shared
 
   void _openDownloadedChapter(DownloadedChapter chapter) {
     final manga = Manga(slug: chapter.mangaSlug, title: chapter.mangaTitle, coverURL: chapter.mangaCover);
