@@ -234,12 +234,12 @@ class MangaService {
     return results;
   }
 
-  (String? chapter, String? time) _parseLatestChapterInfo(String block) {
+  _ChapterInfo _parseLatestChapterInfo(String block) {
     final ch = RegExp(r'<a[^>]+href="[^"]*chapter[^"]*"[^>]*>Chapter\s*([^<]+)</a>');
     final chMatch = ch.firstMatch(block)?.group(1)?.trim();
     final time = RegExp(r'<span[^>]+class="[^"]*font-meta[^"]*"[^>]*>([^<]+)</span>');
     final timeMatch = time.firstMatch(block)?.group(1)?.trim();
-    return (chMatch, timeMatch);
+    return _ChapterInfo(chMatch, timeMatch);
   }
 
   Manga _parseMangaDetail(String html, String slug) {
@@ -282,7 +282,6 @@ class MangaService {
       }
     }
 
-    // ترتيب تنازلي حسب الرقم
     chapters.sort((a, b) => (int.tryParse(b.number) ?? 0).compareTo(int.tryParse(a.number) ?? 0));
 
     return Manga(
@@ -299,7 +298,6 @@ class MangaService {
   }
 
   List<String> _parseChapterPages(String html) {
-    // استخراج صور الفصل من div.reading-content
     final readingReg = RegExp(
       r'<div[^>]+class="[^"]*reading-content[^"]*"[^>]*>(.*?)</div>\s*</div>',
       dotAll: true,
@@ -329,6 +327,12 @@ class MangaService {
       .replaceAll('&quot;', '"')
       .replaceAll('&#039;', "'")
       .replaceAll('&nbsp;', ' ');
+}
+
+class _ChapterInfo {
+  final String? chapter;
+  final String? time;
+  _ChapterInfo(this.chapter, this.time);
 }
 
 extension on String {
