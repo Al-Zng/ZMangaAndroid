@@ -93,7 +93,7 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
     if (manga == null) return;
     for (final slug in selectedChapters) {
       final chapter = manga!.chapters.firstWhere((c) => c.slug == slug);
-      await DownloadManager().downloadChapter(manga: manga!, chapter: chapter);
+      await DownloadManager.shared.downloadChapter(manga: manga!, chapter: chapter); // ✅
     }
     selectedChapters.clear();
     setState(() => multiSelectMode = false);
@@ -163,7 +163,6 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Hero section
           Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -271,7 +270,7 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
                 (p) => p.mangaSlug == m.slug && p.chapterSlug == ch.slug,
                 orElse: () => ReadingProgress(mangaSlug: '', mangaTitle: '', mangaCover: '', chapterSlug: '', chapterNumber: '', pageIndex: 0),
               );
-              final isDownloaded = DownloadManager().isDownloaded(m.slug, ch.slug);
+              final isDownloaded = DownloadManager.shared.isDownloaded(m.slug, ch.slug); // ✅
               return ListTile(
                 leading: multiSelectMode
                     ? Icon(selectedChapters.contains(ch.slug) ? Icons.check_circle : Icons.circle_outlined,
