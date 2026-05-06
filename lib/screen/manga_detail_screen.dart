@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../app_state.dart';
-import '../theme.dart';
-import '../models.dart';
+import '../state/app_state.dart';
+import '../theme/app_theme.dart';
+import '../models/models.dart';
 import '../widgets/cached_image.dart';
 import '../services/manga_service.dart';
+import '../services/download_manager.dart';
 import 'reader_screen.dart';
 
 class MangaDetailScreen extends StatefulWidget {
@@ -24,6 +25,8 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
   String? error;
   bool chapterSortAsc = false;
   bool showChapterError = false;
+  bool multiSelectMode = false;
+  Set<String> selectedChapters = {};
 
   @override
   void initState() {
@@ -34,8 +37,14 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
   Future<void> _loadDetail() async {
     setState(() { isLoading = true; error = null; });
     try {
+      final cached = context.read<AppState>().mangaCache[widget.slug];
+      if (cached != null) {
+        manga = cached;
+        isLoading = false;
+        return;
+      }
       final m = await _service.fetchDetail(widget.slug);
-      setState(() { manga = m; isLoading = false; });
+      setState(() { manga = m; isLoading = false; context.read<AppState>().cacheManga(m); });
     } catch (e) {
       setState(() { isLoading = false; error = e.toString(); });
     }
@@ -80,58 +89,73 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderScreen(manga: manga!, chapter: ch, allChapters: sortedChapters)));
   }
 
+  Future<void> _downloadSelectedChapters() async {
+    if (manga == null) return;
+    for (final slug in selectedChapters) {
+      final chapter = manga!.chapters.firstWhere((c) => c.slug == slug);
+      await DownloadManager().downloadChapter(manga: manga!, chapter: chapter);
+    }
+    selectedChapters.clear();
+    setState(() => multiSelectMode = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppState>();
     return Scaffold(
-      backgroundColor: ZTheme.bg,
+      backgroundColor: AppTheme.bg,
       appBar: AppBar(
-        backgroundColor: ZTheme.surface,
-        title: Text(manga?.title ?? widget.preloadTitle, style: const TextStyle(color: ZTheme.textPrimary, fontSize: 16)),
+        backgroundColor: AppTheme.surface,
+        title: Text(manga?.title ?? widget.preloadTitle, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 16)),
         actions: [
           if (manga != null)
             IconButton(
               icon: Icon(store.isInLibrary(manga!) ? Icons.favorite : Icons.favorite_border,
-                  color: store.isInLibrary(manga!) ? ZTheme.accent : ZTheme.textSecondary),
+                  color: store.isInLibrary(manga!) ? AppTheme.accent : AppTheme.textSecondary),
               onPressed: () => store.isInLibrary(manga!) ? store.removeFromLibrary(manga!) : store.addToLibrary(manga!),
+            ),
+          if (manga != null)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, color: AppTheme.textSecondary),
+              onSelected: (val) {
+                if (val == 'want') {
+                  store.isWantToRead(manga!) ? store.removeWantToRead(manga!) : store.addWantToRead(manga!);
+                } else if (val == 'complete') {
+                  store.isCompleted(manga!) ? store.removeCompleted(manga!) : store.addCompleted(manga!);
+                } else if (val == 'multi') {
+                  setState(() { multiSelectMode = !multiSelectMode; if (!multiSelectMode) selectedChapters.clear(); });
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(value: 'want', child: Text(store.isWantToRead(manga!) ? 'Remove Want to Read' : 'Want to Read')),
+                PopupMenuItem(value: 'complete', child: Text(store.isCompleted(manga!) ? 'Unmark Completed' : 'Completed')),
+                const PopupMenuDivider(),
+                PopupMenuItem(value: 'multi', child: Text(multiSelectMode ? 'Cancel Selection' : 'Select Chapters')),
+              ],
             ),
         ],
       ),
-      body: isLoading ? _loadingState() : error != null ? _errorState() : _content(manga!, store),
+      body: isLoading
+          ? _loadingState()
+          : error != null
+              ? _errorState()
+              : _content(manga!, store),
     );
   }
 
-  Widget _loadingState() => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(width: 110, height: 155, decoration: BoxDecoration(color: ZTheme.card, borderRadius: BorderRadius.circular(12))),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(widget.preloadTitle.isEmpty ? 'Loading...' : widget.preloadTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: ZTheme.textPrimary)),
-                  const SizedBox(height: 8),
-                  Container(height: 12, width: double.infinity, color: ZTheme.card),
-                  const SizedBox(height: 6),
-                  Container(height: 12, width: 80, color: ZTheme.card),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
+  Widget _loadingState() => const Center(child: CircularProgressIndicator(color: AppTheme.accent));
 
   Widget _errorState() => Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.error_outline, size: 40, color: ZTheme.danger),
-          const SizedBox(height: 12),
-          Text(error!, textAlign: TextAlign.center, style: const TextStyle(color: ZTheme.textSecondary)),
-          const SizedBox(height: 12),
-          ElevatedButton(onPressed: _loadDetail, child: const Text('Retry')),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 40, color: AppTheme.danger),
+            const SizedBox(height: 12),
+            Text(error!, style: const TextStyle(color: AppTheme.textSecondary)),
+            const SizedBox(height: 12),
+            ElevatedButton(onPressed: _loadDetail, child: const Text('Retry')),
+          ],
+        ),
       );
 
   Widget _content(Manga m, AppState store) {
@@ -139,27 +163,141 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _heroSection(m, store),
-          const Divider(color: ZTheme.border, height: 1),
-          const SizedBox(height: 16),
+          // Hero section
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(borderRadius: BorderRadius.circular(12), child: CachedMangaImage(url: m.highQualityCoverURL, width: 110, height: 155)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(m.title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                      if (m.author.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(m.author, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                      ],
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          if (m.status.isNotEmpty) _statusBadge(m.status),
+                          if (m.rating.isNotEmpty)
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.star, size: 12, color: AppTheme.accent),
+                              const SizedBox(width: 3),
+                              Text(m.rating, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                            ]),
+                        ],
+                      ),
+                      if (m.genres.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 5,
+                          runSpacing: 5,
+                          children: m.genres.map((g) => Chip(
+                                label: Text(g, style: const TextStyle(color: AppTheme.accent, fontSize: 10)),
+                                backgroundColor: AppTheme.accentDim,
+                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              )).toList(),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      if (firstChapter != null)
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.play_arrow, size: 16),
+                          label: const Text('Start Reading'),
+                          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent, foregroundColor: AppTheme.bg),
+                          onPressed: _startReading,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(color: AppTheme.border),
           if (m.description.isNotEmpty) ...[
-            _description(m.description),
-            const Divider(color: ZTheme.border, height: 1),
             const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text('SYNOPSIS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textSecondary, letterSpacing: 2)),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(m.description, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14, height: 1.4)),
+            ),
+            const Divider(color: AppTheme.border),
           ],
-          _chaptersHeader(m.chapters.length),
-          ListView.separated(
+          if (multiSelectMode)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.download),
+                label: Text('Download (${selectedChapters.length})'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent, foregroundColor: AppTheme.bg),
+                onPressed: selectedChapters.isEmpty ? null : _downloadSelectedChapters,
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('${m.chapters.length} CHAPTERS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textSecondary, letterSpacing: 2)),
+                InkWell(
+                  onTap: () => setState(() => chapterSortAsc = !chapterSortAsc),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(chapterSortAsc ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: AppTheme.textSecondary),
+                    const SizedBox(width: 4),
+                    Text(chapterSortAsc ? 'Oldest' : 'Newest', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  ]),
+                ),
+              ],
+            ),
+          ),
+          ListView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: sortedChapters.length,
-            separatorBuilder: (_, __) => const Divider(color: ZTheme.border, indent: 16),
             itemBuilder: (_, i) {
               final ch = sortedChapters[i];
               final progress = store.history.firstWhere(
                 (p) => p.mangaSlug == m.slug && p.chapterSlug == ch.slug,
                 orElse: () => ReadingProgress(mangaSlug: '', mangaTitle: '', mangaCover: '', chapterSlug: '', chapterNumber: '', pageIndex: 0),
               );
-              return _chapterTile(ch, progress);
+              final isDownloaded = DownloadManager().isDownloaded(m.slug, ch.slug);
+              return ListTile(
+                leading: multiSelectMode
+                    ? Icon(selectedChapters.contains(ch.slug) ? Icons.check_circle : Icons.circle_outlined,
+                        color: selectedChapters.contains(ch.slug) ? AppTheme.accent : AppTheme.textTertiary)
+                    : null,
+                title: Text('Chapter ${ch.number}',
+                    style: TextStyle(color: progress.mangaSlug.isNotEmpty ? AppTheme.textTertiary : AppTheme.textPrimary, fontSize: 14)),
+                subtitle: Row(children: [
+                  if (progress.mangaSlug.isNotEmpty) ...[
+                    Text('p.${progress.pageIndex + 1}', style: const TextStyle(color: AppTheme.accent, fontSize: 12)),
+                    const SizedBox(width: 8),
+                  ],
+                  if (isDownloaded) const Icon(Icons.download_done, color: AppTheme.success, size: 16),
+                ]),
+                trailing: const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
+                onTap: () {
+                  if (multiSelectMode) {
+                    setState(() {
+                      if (selectedChapters.contains(ch.slug)) selectedChapters.remove(ch.slug);
+                      else selectedChapters.add(ch.slug);
+                    });
+                  } else {
+                    _openReader(ch);
+                  }
+                },
+              );
             },
           ),
           const SizedBox(height: 40),
@@ -168,135 +306,13 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
     );
   }
 
-  Widget _heroSection(Manga m, AppState store) {
-    final cover = m.highQualityCoverURL;
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ClipRRect(borderRadius: BorderRadius.circular(12), child: CachedMangaImage(url: cover, width: 110, height: 155)),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(m.title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: ZTheme.textPrimary), maxLines: 3),
-                if (m.author.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(m.author, style: const TextStyle(color: ZTheme.textSecondary, fontSize: 13)),
-                ],
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6, runSpacing: 6,
-                  children: [
-                    if (m.status.isNotEmpty) _statusBadge(m.status),
-                    if (m.rating.isNotEmpty)
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.star, size: 12, color: ZTheme.accent),
-                        const SizedBox(width: 3),
-                        Text(m.rating, style: const TextStyle(color: ZTheme.textSecondary, fontSize: 12)),
-                      ]),
-                  ],
-                ),
-                if (m.genres.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 5, runSpacing: 5,
-                    children: m.genres.map((g) => Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: ZTheme.accentDim, borderRadius: BorderRadius.circular(20)),
-                      child: Text(g, style: const TextStyle(color: ZTheme.accent, fontSize: 10)),
-                    )).toList(),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                if (firstChapter != null)
-                  _readingButton(store, firstChapter!)
-                else
-                  const Text('No chapters available', style: TextStyle(color: ZTheme.textSecondary, fontSize: 13)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _readingButton(AppState store, Chapter firstChap) {
-    final hasProgress = store.history.any((p) => p.mangaSlug == widget.slug);
-    return ElevatedButton.icon(
-      style: ElevatedButton.styleFrom(backgroundColor: ZTheme.accent, foregroundColor: ZTheme.bg, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-      icon: const Icon(Icons.play_arrow, size: 16),
-      label: Text(hasProgress ? 'Continue' : 'Start Reading', style: const TextStyle(fontWeight: FontWeight.w600)),
-      onPressed: _startReading,
-    );
-  }
-
-  Widget _description(String text) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('SYNOPSIS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: ZTheme.textSecondary, letterSpacing: 2)),
-            const SizedBox(height: 8),
-            Text(text, style: const TextStyle(color: ZTheme.textSecondary, fontSize: 14, height: 1.4)),
-          ],
-        ),
-      );
-
-  Widget _chaptersHeader(int count) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        child: Row(
-          children: [
-            Text('$count CHAPTERS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: ZTheme.textSecondary, letterSpacing: 2)),
-            const Spacer(),
-            GestureDetector(
-              onTap: () => setState(() => chapterSortAsc = !chapterSortAsc),
-              child: Row(children: [
-                Icon(chapterSortAsc ? Icons.arrow_upward : Icons.arrow_downward, size: 12, color: ZTheme.textSecondary),
-                const SizedBox(width: 4),
-                Text(chapterSortAsc ? 'Oldest' : 'Newest', style: const TextStyle(color: ZTheme.textSecondary, fontSize: 12)),
-              ]),
-            ),
-          ],
-        ),
-      );
-
-  Widget _chapterTile(Chapter ch, ReadingProgress progress) => InkWell(
-        onTap: () => _openReader(ch),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      Text('Chapter ${ch.number}', style: TextStyle(color: progress.mangaSlug.isNotEmpty ? ZTheme.textTertiary : ZTheme.textPrimary, fontWeight: FontWeight.w500, fontSize: 14)),
-                      if (progress.mangaSlug.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        Text('· p.${progress.pageIndex + 1}', style: const TextStyle(color: ZTheme.accent, fontSize: 12)),
-                      ],
-                    ]),
-                    if (ch.date.isNotEmpty) Text(ch.date, style: const TextStyle(color: ZTheme.textTertiary, fontSize: 11)),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right, color: ZTheme.textTertiary, size: 16),
-            ],
-          ),
-        ),
-      );
-
   Widget _statusBadge(String text) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: text.toLowerCase().contains('ongoing') ? const Color(0xFF4CAF82).withOpacity(0.12) : ZTheme.textTertiary.withOpacity(0.12),
+          color: text.toLowerCase().contains('ongoing') ? const Color(0xFF4CAF82).withOpacity(0.12) : AppTheme.textTertiary.withOpacity(0.12),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600,
-            color: text.toLowerCase().contains('ongoing') ? const Color(0xFF4CAF82) : ZTheme.textTertiary)),
+            color: text.toLowerCase().contains('ongoing') ? const Color(0xFF4CAF82) : AppTheme.textTertiary)),
       );
 }
