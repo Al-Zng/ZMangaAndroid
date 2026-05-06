@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/material.dart';
 
-class NetworkMonitor {
+class NetworkMonitor extends ChangeNotifier {
   static final NetworkMonitor _instance = NetworkMonitor._internal();
   factory NetworkMonitor() => _instance;
   NetworkMonitor._internal();
@@ -10,20 +11,21 @@ class NetworkMonitor {
   bool _isConnected = true;
   bool get isConnected => _isConnected;
 
-  final StreamController<bool> _controller = StreamController<bool>.broadcast();
-  Stream<bool> get onConnectivityChanged => _controller.stream;
+  StreamSubscription<List<ConnectivityResult>>? _subscription;
 
   NetworkMonitor() {
-    _connectivity.onConnectivityChanged.listen((List<ConnectivityResult> results) {
+    _subscription = _connectivity.onConnectivityChanged.listen((results) {
       final connected = results.isNotEmpty && results.first != ConnectivityResult.none;
       if (connected != _isConnected) {
         _isConnected = connected;
-        _controller.add(connected);
+        notifyListeners();
       }
     });
   }
 
+  @override
   void dispose() {
-    _controller.close();
+    _subscription?.cancel();
+    super.dispose();
   }
 }
