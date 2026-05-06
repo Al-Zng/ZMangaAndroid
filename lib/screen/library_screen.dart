@@ -35,7 +35,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         list = store.completed;
         break;
       case Category.downloaded:
-        final slugs = DownloadManager().downloads.values.map((e) => e.mangaSlug).toSet();
+        final slugs = DownloadManager.shared.downloads.values.map((e) => e.mangaSlug).toSet();
         list = (store.library + store.wantToRead + store.completed)
             .where((m) => slugs.contains(m.slug))
             .toList();
@@ -87,7 +87,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
       body: Column(
         children: [
-          // Category tabs
           Container(
             height: 50,
             color: AppTheme.surface,
@@ -117,7 +116,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
           ),
           const Divider(color: AppTheme.border, height: 1),
-          // Grid
           Expanded(
             child: items.isEmpty
                 ? Center(
