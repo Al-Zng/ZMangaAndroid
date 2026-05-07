@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../models/models.dart';
 import '../state/app_state.dart';
@@ -37,6 +38,13 @@ class MangaService {
     request.headers.set('Accept',
         'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
     request.headers.set('Accept-Language', 'ar,en;q=0.9');
+
+    // حقن كوكيز Cloudflare المحفوظة
+    final prefs = await SharedPreferences.getInstance();
+    final savedCookies = prefs.getString('cf_cookies');
+    if (savedCookies != null && savedCookies.isNotEmpty) {
+      request.headers.set('Cookie', savedCookies);
+    }
 
     final response = await request.close();
     final responseBody = await response.transform(utf8.decoder).join();
@@ -131,8 +139,8 @@ class MangaService {
         final wvHTML = await _fetchHTMLViaWebView(urlString);
         if (wvHTML.contains('Just a moment') ||
             wvHTML.contains('Checking your browser')) {
-          AppState.current?.triggerCloudflare(urlString);
           throw Exception('Cloudflare challenge');
+          // triggerCloudflare تم استدعاؤها بالفعل من fetchHTML
         }
         return _parseChapterPages(wvHTML);
       } catch (e) {
