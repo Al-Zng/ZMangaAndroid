@@ -18,7 +18,6 @@ dependencies:
   http: ^1.1.0
   path_provider: ^2.1.1
   connectivity_plus: ^5.0.2
-  cloudflare_bypass: ^0.0.1
 
 dev_dependencies:
   flutter_test:
