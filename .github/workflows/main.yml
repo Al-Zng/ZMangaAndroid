@@ -24,11 +24,13 @@ jobs:
         with:
           channel: 'stable'
 
+      # ✅ حذف مجلد android القديم وإعادة إنشائه بإصدار v2 embedding الحديث
       - name: Recreate Android folder with v2 embedding
         run: |
           rm -rf android
           flutter create --platforms android .
 
+      # ✅ إضافة صلاحية الإنترنت إلى البيان
       - name: Add INTERNET permission
         run: |
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
@@ -36,10 +38,11 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build APKs (arm64-v8a + armeabi-v7a)
-        run: flutter build apk --release --target-platform android-arm,android-arm64
+      # ✅ بناء نسختين (32-بت و 64-بت) باستخدام --split-per-abi
+      - name: Build APKs (split per ABI)
+        run: flutter build apk --release --split-per-abi
 
-      - name: Upload both APKs
+      - name: Upload all APKs
         uses: actions/upload-artifact@v4
         with:
           name: ZManga-APKs
