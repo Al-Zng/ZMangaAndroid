@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import '../models/models.dart';
 import '../widgets/cached_image.dart';
 import '../services/manga_service.dart';
+import '../services/download_manager.dart';
 
 class ReaderScreen extends StatefulWidget {
   final Manga manga;
@@ -49,16 +50,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _loadInitial() async {
-    setState(() { isLoading = true; error = null; });
+    setState(() {
+      isLoading = true;
+      error = null;
+    });
     try {
       List<String> urls;
       if (widget.preloadedPages != null) {
         urls = widget.preloadedPages!;
       } else {
-        urls = await _service.fetchChapterPages(widget.manga.slug, widget.chapter.slug);
+        final localPages =
+            DownloadManager.shared.getPages(widget.manga.slug, widget.chapter.slug);
+        if (localPages != null) {
+          urls = localPages;
+        } else {
+          urls = await _service.fetchChapterPages(widget.manga.slug, widget.chapter.slug);
+        }
       }
       totalPages = urls.length;
-      // محاكاة تحميل الصفحات (اختياري)
+      // محاكاة تحميل اختياري
       for (int i = 0; i < urls.length; i++) {
         await Future.delayed(const Duration(milliseconds: 10));
         setState(() {
@@ -74,7 +84,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
         currentPage = widget.initialPage.clamp(0, allPages.length - 1);
       });
     } catch (e) {
-      setState(() { error = e.toString(); isLoading = false; });
+      setState(() {
+        error = e.toString();
+        isLoading = false;
+      });
     }
   }
 
@@ -111,9 +124,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     String chSlug = widget.chapter.slug;
     int boundaryStart = 0;
     for (final b in chapterBoundaries.reversed) {
-      if (pageIdx >= b.startIndex) { chSlug = b.slug; boundaryStart = b.startIndex; break; }
+      if (pageIdx >= b.startIndex) {
+        chSlug = b.slug;
+        boundaryStart = b.startIndex;
+        break;
+      }
     }
-    final chNum = widget.manga.chapters.firstWhere((c) => c.slug == chSlug, orElse: () => widget.chapter).number;
+    final chNum = widget.manga.chapters
+        .firstWhere((c) => c.slug == chSlug, orElse: () => widget.chapter)
+        .number;
     final localIdx = pageIdx - boundaryStart;
     final progress = ReadingProgress(
       mangaSlug: widget.manga.slug,
@@ -143,7 +162,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   Column(children: [
                     LinearProgressIndicator(value: loadingProgress, color: AppTheme.accent),
                     const SizedBox(height: 8),
-                    Text('$loadedPagesCount / $totalPages pages', style: const TextStyle(color: AppTheme.textSecondary)),
+                    Text('$loadedPagesCount / $totalPages pages',
+                        style: const TextStyle(color: AppTheme.textSecondary)),
                   ]),
               ]),
             )
@@ -162,7 +182,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 itemBuilder: (_, idx) {
                   if (idx < allPages.length) {
                     if (chapterBoundaries.any((b) => b.startIndex == idx) && idx > 0) {
-                      final num = widget.manga.chapters.firstWhere((c) => c.slug == chapterBoundaries.firstWhere((b) => b.startIndex == idx).slug).number;
+                      final num = widget.manga.chapters
+                          .firstWhere((c) =>
+                              c.slug ==
+                              chapterBoundaries
+                                  .firstWhere((b) => b.startIndex == idx)
+                                  .slug)
+                          .number;
                       return Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -173,29 +199,49 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     }
                     return _pageItem(idx);
                   }
-                  return const Center(child: CircularProgressIndicator(color: AppTheme.accent));
+                  return const Center(
+                      child: CircularProgressIndicator(color: AppTheme.accent));
                 },
               ),
             ),
-          // Top bar
+          // شريط علوي
           if (showUI && !isLoading && allPages.isNotEmpty)
             Positioned(
-              top: 0, left: 0, right: 0,
+              top: 0,
+              left: 0,
+              right: 0,
               child: Container(
-                padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 8, left: 48, right: 16, bottom: 14),
-                decoration: const BoxDecoration(gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+                padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).padding.top + 8,
+                    left: 48,
+                    right: 16,
+                    bottom: 14),
+                decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                        colors: [Colors.black87, Colors.transparent],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter)),
                 child: Row(children: [
                   Expanded(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(widget.manga.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-                      Text('Chapter $currentChNum', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                    ]),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(widget.manga.title,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14)),
+                          Text('Chapter $_currentChNum',
+                              style: const TextStyle(
+                                  color: Colors.white54, fontSize: 12)),
+                        ]),
                   ),
-                  Text('${currentPage + 1} / ${allPages.length}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text('${currentPage + 1} / ${allPages.length}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12)),
                 ]),
               ),
             ),
-          // Close button
+          // زر الإغلاق
           SafeArea(
             child: Align(
               alignment: Alignment.topLeft,
@@ -210,16 +256,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  String get currentChNum {
+  String get _currentChNum {
     for (final b in chapterBoundaries.reversed) {
       if (currentPage >= b.startIndex) {
-        return widget.manga.chapters.firstWhere((c) => c.slug == b.slug, orElse: () => widget.chapter).number;
+        return widget.manga.chapters
+            .firstWhere((c) => c.slug == b.slug, orElse: () => widget.chapter)
+            .number;
       }
     }
     return widget.chapter.number;
   }
 
-  Widget _pageItem(int idx) => CachedMangaImage(url: allPages[idx].url, fit: BoxFit.fitWidth);
+  Widget _pageItem(int idx) =>
+      CachedMangaImage(url: allPages[idx].url, fit: BoxFit.fitWidth);
 
   Widget _chapterSeparator(String number) => Container(
         padding: const EdgeInsets.symmetric(vertical: 20),
@@ -227,8 +276,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
           Expanded(child: Container(height: 1, color: Colors.white12)),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.1), border: Border.all(color: AppTheme.accent.withOpacity(0.3)), borderRadius: BorderRadius.circular(20)),
-            child: Text('Chapter $number', style: const TextStyle(color: AppTheme.accent, fontSize: 12, fontWeight: FontWeight.w600)),
+            decoration: BoxDecoration(
+                color: AppTheme.accent.withOpacity(0.1),
+                border: Border.all(color: AppTheme.accent.withOpacity(0.3)),
+                borderRadius: BorderRadius.circular(20)),
+            child: Text('Chapter $number',
+                style: const TextStyle(
+                    color: AppTheme.accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
           ),
           Expanded(child: Container(height: 1, color: Colors.white12)),
         ]),
