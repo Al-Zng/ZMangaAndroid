@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'state/app_state.dart';
-import 'screen/main_shell.dart';
 import 'theme/app_theme.dart';
 import 'utils/network_monitor.dart';
+import 'screen/content_shell.dart';
 
 void main() {
   runApp(
@@ -25,7 +25,7 @@ class ZMangaApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      home: const MainShell(),
+      home: const ContentShell(),
     );
   }
 }
