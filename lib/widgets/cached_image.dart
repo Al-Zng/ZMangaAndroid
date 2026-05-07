@@ -9,21 +9,25 @@ class CachedMangaImage extends StatelessWidget {
   final double? height;
 
   const CachedMangaImage({
-    Key? key,
+    super.key,
     this.url,
     this.fit = BoxFit.cover,
     this.width,
     this.height,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (url == null || url!.isEmpty || url!.contains('lekmanga.png') || url!.contains('-512.png')) {
+    if (url == null ||
+        url!.isEmpty ||
+        url!.contains('lekmanga.png') ||
+        url!.contains('-512.png') ||
+        url!.contains('/favicon')) {
       return _placeholder();
     }
     return CachedNetworkImage(
       imageUrl: url!,
-      httpHeaders: {'Referer': 'https://lekmanga.site'},
+      httpHeaders: const {'Referer': 'https://lekmanga.site'},
       width: width,
       height: height,
       fit: fit,
@@ -34,6 +38,8 @@ class CachedMangaImage extends StatelessWidget {
 
   Widget _placeholder() => Container(
         color: AppTheme.card,
-        child: Center(child: Icon(Icons.image, color: AppTheme.textTertiary)),
+        child: Center(
+          child: Icon(Icons.image, color: AppTheme.textTertiary),
+        ),
       );
 }
