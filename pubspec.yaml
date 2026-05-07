@@ -1,5 +1,5 @@
 name: zmanga
-description: ZManga - Flutter manga reader
+description: ZManga - Flutter manga reader app.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -15,10 +15,10 @@ dependencies:
   webview_flutter: ^4.4.2
   html: ^0.15.4
   intl: ^0.18.1
-  cookie_jar: ^4.0.8
-  path_provider: ^2.1.1
   http: ^1.1.0
+  path_provider: ^2.1.1
   connectivity_plus: ^5.0.2
+  cloudflare_bypass: ^0.0.1
 
 dev_dependencies:
   flutter_test:
