@@ -232,6 +232,12 @@ class AppState extends ChangeNotifier {
 
   void dismissCloudflare() {
     _showCloudflareSheet = false;
+    // نبقي _cloudflareURL لأن الـ sheet قد يحتاجه بعد الإغلاق
+    notifyListeners();
+  }
+
+  void clearCloudflareURL() {
+    _cloudflareURL = null;
     notifyListeners();
   }
 
