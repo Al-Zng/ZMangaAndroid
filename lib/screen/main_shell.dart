@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/network_monitor.dart';
+import '../widgets/cloudflare_bypass_sheet.dart';
 import 'home_screen.dart';
 import 'search_screen.dart';
 import 'library_screen.dart';
@@ -17,6 +19,7 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
+  bool _isShowingCloudflare = false;
 
   final List<Widget> _tabs = const [
     HomeScreen(),
@@ -26,9 +29,31 @@ class _MainShellState extends State<MainShell> {
     HistoryScreen(),
   ];
 
+  void _showCloudflareBypass(BuildContext context, AppState appState) {
+    if (_isShowingCloudflare) return;
+    _isShowingCloudflare = true;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      builder: (_) => CloudflareBypassSheet(
+        url: appState.cloudflareURL!,
+        appState: appState,
+      ),
+    ).whenComplete(() => _isShowingCloudflare = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final net = context.watch<NetworkMonitor>();
+    final appState = context.watch<AppState>(); // ← مراقبة AppState
+
+    if (appState.showCloudflareSheet && appState.cloudflareURL != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showCloudflareBypass(context, appState);
+      });
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
