@@ -134,23 +134,36 @@ class _SearchScreenState extends State<SearchScreen> {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           children: [
-            _pill('All', selectedGenre == null, () {
-              selectedGenre = null;
-              results.clear();
-              setState(() {});
-            }),
-            ...genres.map(
-              (g) => _pill(g, selectedGenre == g, () {
-                selectedGenre = g;
+            _pill(
+              text: 'All',
+              selected: selectedGenre == null,
+              onTap: () {
+                selectedGenre = null;
                 results.clear();
-                _search();
-              }),
+                setState(() {});
+              },
+            ),
+            ...genres.map(
+              (g) => _pill(
+                text: g,
+                selected: selectedGenre == g,
+                onTap: () {
+                  selectedGenre = g;
+                  results.clear();
+                  _search();
+                },
+              ),
             ),
           ],
         ),
       );
 
-  Widget _pill(String text, {required bool selected, required VoidCallback onTap}) => Padding(
+  Widget _pill({
+    required String text,
+    required bool selected,
+    required VoidCallback onTap,
+  }) =>
+      Padding(
         padding: const EdgeInsets.only(right: 8),
         child: GestureDetector(
           onTap: onTap,
@@ -175,7 +188,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _resultsGrid() => NotificationListener<ScrollNotification>(
         onNotification: (notification) {
-          if (notification is ScrollEndNotification && notification.metrics.extentAfter < 200) _loadMore();
+          if (notification is ScrollEndNotification &&
+              notification.metrics.extentAfter < 200) _loadMore();
           return false;
         },
         child: GridView.builder(
@@ -189,7 +203,8 @@ class _SearchScreenState extends State<SearchScreen> {
           itemCount: results.length + (loadingMore ? 1 : 0),
           itemBuilder: (_, i) {
             if (i >= results.length) {
-              return const Center(child: CircularProgressIndicator(color: AppTheme.accent));
+              return const Center(
+                  child: CircularProgressIndicator(color: AppTheme.accent));
             }
             final m = results[i];
             return GestureDetector(
@@ -212,7 +227,10 @@ class _SearchScreenState extends State<SearchScreen> {
                       child: CachedMangaImage(url: m.highQualityCoverURL),
                     ),
                   ),
-                  Text(m.title, maxLines: 2, style: const TextStyle(fontSize: 11, color: AppTheme.textPrimary)),
+                  Text(m.title,
+                      maxLines: 2,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppTheme.textPrimary)),
                 ],
               ),
             );
@@ -221,10 +239,12 @@ class _SearchScreenState extends State<SearchScreen> {
       );
 
   Widget _emptyState() => Center(
-        child: Text('No results for "${_controller.text}"', style: const TextStyle(color: AppTheme.textSecondary)),
+        child: Text('No results for "${_controller.text}"',
+            style: const TextStyle(color: AppTheme.textSecondary)),
       );
 
   Widget _browsePrompt() => const Center(
-        child: Text('Search or browse by genre', style: TextStyle(color: AppTheme.textSecondary)),
+        child: Text('Search or browse by genre',
+            style: TextStyle(color: AppTheme.textSecondary)),
       );
 }
