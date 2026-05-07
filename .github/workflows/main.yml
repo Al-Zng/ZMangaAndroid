@@ -1,4 +1,4 @@
-  name: Build ZManga APK
+name: Build ZManga APK
 
 on:
   push:
@@ -10,40 +10,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '17'
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-    - name: Set up Flutter
-      uses: subosito/flutter-action@v2
-      with:
-        channel: 'stable'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
 
-    # ✅ حذف مجلد android القديم (إن وُجد) وإعادة إنشائه بإصدار v2 embedding حديث
-    - name: Recreate Android folder with v2 embedding
-      run: |
-        rm -rf android
-        flutter create --platforms android .
+      - name: Recreate Android folder with v2 embedding
+        run: |
+          rm -rf android
+          flutter create --platforms android .
 
-    # ✅ إضافة صلاحية الإنترنت إلى البيان
-    - name: Add INTERNET permission
-      run: |
-        sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
+      - name: Add INTERNET permission
+        run: |
+          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
 
-    - name: Get dependencies
-      run: flutter pub get
+      - name: Get dependencies
+        run: flutter pub get
 
-    # ✅ بناء نسختين فقط (32-بت و 64-بت)
-    - name: Build APKs (arm64-v8a + armeabi-v7a)
-      run: flutter build apk --release --target-platform android-arm,android-arm64
+      - name: Build APKs (arm64-v8a + armeabi-v7a)
+        run: flutter build apk --release --target-platform android-arm,android-arm64
 
-    - name: Upload both APKs
-      uses: actions/upload-artifact@v4
-      with:
-        name: ZManga-APKs
-        path: build/app/outputs/flutter-apk/app-*-release.apk
+      - name: Upload both APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZManga-APKs
+          path: build/app/outputs/flutter-apk/app-*-release.apk
