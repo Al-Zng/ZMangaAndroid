@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/network_monitor.dart';
 import 'home_screen.dart';
@@ -8,7 +7,6 @@ import 'search_screen.dart';
 import 'library_screen.dart';
 import 'downloads_screen.dart';
 import 'history_screen.dart';
-import 'cloudflare_sheet.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -19,7 +17,6 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
-  bool _cloudflareOpen = false;
 
   final List<Widget> _tabs = const [
     HomeScreen(),
@@ -28,38 +25,6 @@ class _MainShellState extends State<MainShell> {
     DownloadsScreen(),
     HistoryScreen(),
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppState>().addListener(_checkCloudflare);
-    });
-  }
-
-  @override
-  void dispose() {
-    context.read<AppState>().removeListener(_checkCloudflare);
-    super.dispose();
-  }
-
-  void _checkCloudflare() {
-    final state = context.read<AppState>();
-    if (!state.showCloudflareSheet || _cloudflareOpen) return;
-    _cloudflareOpen = true;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const CloudflareSheet(),
-          settings: const RouteSettings(name: '/cloudflare'),
-        ),
-      ).then((_) {
-        _cloudflareOpen = false;
-      });
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,8 +42,7 @@ class _MainShellState extends State<MainShell> {
           if (!net.isConnected)
             Container(
               width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
               color: Colors.black.withOpacity(0.9),
               child: const Row(
                 children: [
@@ -104,14 +68,10 @@ class _MainShellState extends State<MainShell> {
             type: BottomNavigationBarType.fixed,
             items: const [
               BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.search), label: 'Search'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.library_books), label: 'Library'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.download), label: 'Downloads'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.history), label: 'History'),
+              BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
+              BottomNavigationBarItem(icon: Icon(Icons.library_books), label: 'Library'),
+              BottomNavigationBarItem(icon: Icon(Icons.download), label: 'Downloads'),
+              BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
             ],
           ),
         ],
