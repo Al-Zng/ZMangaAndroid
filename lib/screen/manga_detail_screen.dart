@@ -1,520 +1,509 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:webview_flutter/webview_flutter.dart';
-import '../models/models.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
+import '../models/models.dart';
+import '../widgets/cached_image.dart';
+import '../services/manga_service.dart';
+import '../services/download_manager.dart';
+import 'reader_screen.dart';
 
-class MangaService {
-  static const String baseURL = 'https://lekmanga.site';
-  static final MangaService _instance = MangaService._internal();
-  factory MangaService() => _instance;
-  MangaService._internal();
+class MangaDetailScreen extends StatefulWidget {
+  final String slug;
+  final String preloadTitle;
+  final String preloadCover;
 
-  // WebView مخصص فقط لتحميل صفحات الفصول (lazy loading) ولتجاوز Cloudflare
-  WebViewController? _chapterWebViewController;
+  const MangaDetailScreen({
+    super.key,
+    required this.slug,
+    this.preloadTitle = '',
+    this.preloadCover = '',
+  });
 
-  WebViewController _getChapterWebViewController() {
-    if (_chapterWebViewController != null) return _chapterWebViewController!;
-    _chapterWebViewController = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-      );
-    return _chapterWebViewController!;
+  @override
+  State<MangaDetailScreen> createState() => _MangaDetailScreenState();
+}
+
+class _MangaDetailScreenState extends State<MangaDetailScreen> {
+  final _service = MangaService();
+  final _dm = DownloadManager.shared;
+  Manga? manga;
+  bool isLoading = true;
+  String? error;
+  bool chapterSortAsc = false;
+  bool showChapterError = false;
+  bool multiSelectMode = false;
+  final Set<String> selectedChapters = {};
+  final Set<String> downloadingChapters = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetail();
   }
 
-  // MARK: - fetchHTML عبر HTTP Client مباشرة
-  Future<String> fetchHTML(String urlString) async {
-    final uri = Uri.parse(urlString);
-    final client = HttpClient();
-    final request = await client.getUrl(uri);
-    request.headers.set('User-Agent',
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1');
-    request.headers.set('Referer', 'https://lekmanga.site');
-    request.headers.set('Accept',
-        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
-    request.headers.set('Accept-Language', 'ar,en;q=0.9');
-
-    final response = await request.close();
-    final responseBody = await response.transform(utf8.decoder).join();
-
-    if (response.statusCode == 403 ||
-        responseBody.contains('Just a moment') ||
-        responseBody.contains('cf-browser-verification') ||
-        responseBody.contains('Checking your browser') ||
-        responseBody.contains('Attention Required')) {
-      // Cloudflare detected -> trigger popup
-      AppState.current?.triggerCloudflare(urlString);
-      return '';
-    }
-    if (response.statusCode == 200) {
-      return responseBody;
-    } else {
-      throw Exception('Failed to load: ${response.statusCode}');
-    }
-  }
-
-  // MARK: - fetchHTMLViaWebView (مثل iOS تماماً)
-  Future<String> _fetchHTMLViaWebView(String urlString) async {
-    final controller = _getChapterWebViewController();
-    final completer = Completer<String>();
-
-    controller.setNavigationDelegate(NavigationDelegate(
-      onPageFinished: (url) async {
-        final html = await controller.runJavaScriptReturningResult(
-          'document.documentElement.outerHTML',
-        ) as String? ?? '';
-        if (!completer.isCompleted) {
-          completer.complete(html);
-        }
-      },
-      onWebResourceError: (error) {
-        if (!completer.isCompleted) {
-          completer.completeError(Exception('WebView error'));
-        }
-      },
-    ));
-    controller.loadRequest(Uri.parse(urlString));
-
-    return completer.future.timeout(const Duration(seconds: 30));
-  }
-
-  // MARK: - Public API
-  Future<List<Manga>> fetchLatest({int page = 1}) async {
-    final html =
-        await fetchHTML('$baseURL/manga/?m_orderby=latest&page=$page');
-    return _parseMangaList(html, extractChapterInfo: true);
-  }
-
-  Future<List<Manga>> fetchPopular({int page = 1}) async {
-    final html =
-        await fetchHTML('$baseURL/manga/?m_orderby=views&page=$page');
-    return _parseMangaList(html, extractChapterInfo: false);
-  }
-
-  Future<List<Manga>> search(String query, {int page = 1}) async {
-    final encoded = Uri.encodeQueryComponent(query);
-    final html =
-        await fetchHTML('$baseURL/?s=$encoded&post_type=wp-manga&page=$page');
-    return _parseMangaList(html, extractChapterInfo: false)
-        .where((m) =>
-            !m.slug.contains('feed') &&
-            m.slug.isNotEmpty &&
-            m.coverURL.isNotEmpty)
-        .toList();
-  }
-
-  Future<List<Manga>> fetchByGenre(String genre, {int page = 1}) async {
-    final html =
-        await fetchHTML('$baseURL/manga-genre/$genre/?page=$page');
-    return _parseMangaList(html, extractChapterInfo: false);
-  }
-
-  Future<Manga> fetchDetail(String slug) async {
-    final html = await fetchHTML('$baseURL/manga/$slug/');
-    if (html.isEmpty) throw Exception('Cloudflare challenge');
-    return _parseMangaDetail(html, slug);
-  }
-
-  Future<List<String>> fetchChapterPages(
-      String mangaSlug, String chapterSlug) async {
-    final urlString = '$baseURL/manga/$mangaSlug/$chapterSlug/';
-
-    // 1. جلب HTML أولاً عبر URLSession للحصول على chapter_id
-    final html = await fetchHTML(urlString);
-    if (html.isEmpty) {
-      // إذا كان فارغاً بسبب Cloudflare، جرب WebView
-      try {
-        final wvHTML = await _fetchHTMLViaWebView(urlString);
-        if (wvHTML.contains('Just a moment') ||
-            wvHTML.contains('Checking your browser')) {
-          AppState.current?.triggerCloudflare(urlString);
-          throw Exception('Cloudflare challenge');
-        }
-        return _parseChapterPages(wvHTML);
-      } catch (e) {
-        throw Exception('Cloudflare challenge');
-      }
-    }
-
-    // 2. محاولة AJAX (الأسرع)
-    final chapterIdPattern =
-        r'(?:wp-manga-current-chap[^>]+data-id|data-id)="(\d+)"';
-    final chapterIdRegExp = RegExp(chapterIdPattern);
-    final chapterIdMatch = chapterIdRegExp.firstMatch(html);
-    if (chapterIdMatch != null) {
-      final chapterId = chapterIdMatch.group(1)!;
-      try {
-        final pages = await _fetchChapterImagesViaAJAX(chapterId);
-        if (pages.isNotEmpty) return pages;
-      } catch (_) {}
-    }
-
-    // 3. محاولة parse مباشر من HTML الأولي
-    final directPages = _parseChapterPages(html);
-    if (directPages.isNotEmpty) return directPages;
-
-    // 4. آخر حل: WebView مع انتظار lazy loading
+  Future<void> _loadDetail() async {
+    setState(() {
+      isLoading = true;
+      error = null;
+    });
     try {
-      final wvHTML = await _fetchHTMLViaWebView(urlString);
-      return _parseChapterPages(wvHTML);
+      final cached = context.read<AppState>().mangaCache[widget.slug];
+      if (cached != null) {
+        manga = cached;
+        isLoading = false;
+        return;
+      }
+      final m = await _service.fetchDetail(widget.slug);
+      setState(() {
+        manga = m;
+        isLoading = false;
+        context.read<AppState>().cacheManga(m);
+      });
     } catch (e) {
-      return [];
+      setState(() {
+        isLoading = false;
+        error = e.toString();
+      });
     }
   }
 
-  // MARK: - AJAX Image Fetching
-  Future<List<String>> _fetchChapterImagesViaAJAX(String chapterId) async {
-    final ajaxURL = Uri.parse('$baseURL/wp-admin/admin-ajax.php');
-    final client = HttpClient();
-    final request = await client.postUrl(ajaxURL);
-    request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
-    request.headers.set('Referer', baseURL);
-    request.headers.set('X-Requested-With', 'XMLHttpRequest');
-    request.headers.set('User-Agent',
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1');
-    request.write('action=manga_get_chapter_img_list&chapter_id=$chapterId');
-    final response = await request.close();
-    final responseBody = await response.transform(utf8.decoder).join();
+  List<Chapter> get sortedChapters {
+    if (manga == null) return [];
+    final list = List<Chapter>.from(manga!.chapters);
+    list.sort((a, b) {
+      final na = double.tryParse(a.number) ?? 0;
+      final nb = double.tryParse(b.number) ?? 0;
+      return chapterSortAsc ? na.compareTo(nb) : nb.compareTo(na);
+    });
+    return list;
+  }
 
-    if (response.statusCode == 200) {
-      try {
-        final List<dynamic> arr = jsonDecode(responseBody);
-        return arr
-            .map((e) => e['url'] as String?)
-            .where((url) => url != null && url.startsWith('http'))
-            .cast<String>()
-            .toList();
-      } catch (_) {}
-      try {
-        final Map<String, dynamic> dict = jsonDecode(responseBody);
-        if (dict['data'] is Map && dict['data']['images'] is List) {
-          return (dict['data']['images'] as List)
-              .map((e) => e['url'] as String?)
-              .where((url) => url != null && url.startsWith('http'))
-              .cast<String>()
-              .toList();
-        }
-      } catch (_) {}
-      if (responseBody.contains('<img')) {
-        return _parseChapterPages(responseBody);
-      }
+  Chapter? get firstChapter {
+    if (manga == null || manga!.chapters.isEmpty) return null;
+    return manga!.chapters.reduce((a, b) =>
+        (double.tryParse(a.number) ?? 0) < (double.tryParse(b.number) ?? 0)
+            ? a
+            : b);
+  }
+
+  void _startReading() {
+    if (manga == null || manga!.chapters.isEmpty) {
+      setState(() => showChapterError = true);
+      return;
     }
-    return [];
-  }
-
-  // ========================
-  // دوال التحليل (مطابقة لـ Swift)
-  // ========================
-  List<Manga> _parseMangaList(String html,
-      {required bool extractChapterInfo}) {
-    final results = <Manga>[];
-    final cardPattern = RegExp(
-      r'<div class="page-item-detail[^"]*manga[^"]*">(.*?)</div>\s*</div>\s*</div>',
-      dotAll: true,
-    );
-    for (final match in cardPattern.allMatches(html).take(30)) {
-      final block = match.group(1)!;
-      var manga = _parseMangaCard(block);
-      if (manga != null) {
-        if (manga.coverURL.isEmpty || _isLogoOnly(manga.coverURL)) continue;
-        if (extractChapterInfo) {
-          final info = _parseLatestChapterInfo(block);
-          manga = manga.copyWith(
-            latestChapterNumber: info.chapter,
-            lastUpdated: info.time,
-          );
-        }
-        results.add(manga);
-      }
-    }
-    if (results.isEmpty) {
-      results.addAll(
-          _parseMangaSimple(html, extractChapterInfo: extractChapterInfo));
-    }
-    return results;
-  }
-
-  bool _isLogoOnly(String url) =>
-      url.toLowerCase().contains('lekmanga.png') ||
-      url.toLowerCase().contains('-512.png') ||
-      url.toLowerCase().contains('/favicon');
-
-  Manga? _parseMangaCard(String block) {
-    final slugReg = RegExp(r'href="https?://[^/]+/manga/([^/"]+)/"');
-    final slugMatch = slugReg.firstMatch(block);
-    if (slugMatch == null) return null;
-    final slug = slugMatch.group(1)!;
-
-    final titleReg1 = RegExp(r'<h3[^>]*>\s*<a[^>]*>([^<]+)</a>');
-    final titleReg2 = RegExp(r'<h5[^>]*>\s*<a[^>]*>([^<]+)</a>');
-    final title = titleReg1.firstMatch(block)?.group(1) ??
-        titleReg2.firstMatch(block)?.group(1) ??
-        slug
-            .replaceAll('-', ' ')
-            .split(' ')
-            .map((w) => w.isNotEmpty
-                ? '${w[0].toUpperCase()}${w.substring(1)}'
-                : '')
-            .join(' ');
-
-    final allImgTags = _extractHTMLTags('img', block);
-    final cover = _extractImageURL(allImgTags);
-    if (slug.isEmpty || slug == 'feed' || _isLogoOnly(cover)) return null;
-    return Manga(slug: slug, title: _htmlDecode(title), coverURL: cover);
-  }
-
-  List<String> _extractHTMLTags(String tagName, String html) {
-    final pattern = '<$tagName\\s[^>]*>';
-    final regex = RegExp(pattern, dotAll: true, caseSensitive: false);
-    return regex.allMatches(html).map((m) => m.group(0)!).toList();
-  }
-
-  String _extractImageURL(List<String> tags) {
-    for (final tag in tags) {
-      final dataLazySrc = RegExp(r'data-lazy-src\s*=\s*"([^"]+)"');
-      final match1 = dataLazySrc.firstMatch(tag);
-      if (match1 != null && match1.group(1)!.startsWith('http')) {
-        return match1.group(1)!;
-      }
-      final dataSrc = RegExp(r'data-src\s*=\s*"([^"]+)"');
-      final match2 = dataSrc.firstMatch(tag);
-      if (match2 != null && match2.group(1)!.startsWith('http')) {
-        return match2.group(1)!;
-      }
-      final src = RegExp(r'src\s*=\s*"([^"]+)"');
-      final match3 = src.firstMatch(tag);
-      if (match3 != null &&
-          match3.group(1)!.startsWith('http') &&
-          !_isLogoOnly(match3.group(1)!)) {
-        return match3.group(1)!;
-      }
-    }
-    return '';
-  }
-
-  bool _isValidImageURL(String url) =>
-      url.startsWith('http') &&
-      ['.jpg', '.jpeg', '.png', '.webp'].any(url.toLowerCase().contains);
-
-  List<Manga> _parseMangaSimple(String html,
-      {required bool extractChapterInfo}) {
-    final results = <Manga>[];
-    final linkPattern = RegExp(
-        r'href="(https?://[^/]+/manga/([^/"]+)/)\"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{3,})"');
-    for (final match in linkPattern.allMatches(html)) {
-      final slug = match.group(2)!;
-      final rawTitle = match.group(3)!.trim();
-      if (slug.isEmpty ||
-          rawTitle.isEmpty ||
-          rawTitle.length > 200 ||
-          slug == 'feed' ||
-          slug.contains('cdn-cgi')) continue;
-      if (results.any((m) => m.slug == slug)) continue;
-
-      final searchStart = match.start;
-      final searchEnd = (searchStart + 2000).clamp(0, html.length);
-      final searchBlock = html.substring(searchStart, searchEnd);
-      final allImgTags = _extractHTMLTags('img', searchBlock);
-      final cover = _extractImageURL(allImgTags);
-      var manga = Manga(
-        slug: slug,
-        title: _htmlDecode(rawTitle),
-        coverURL: _isLogoOnly(cover) ? '' : cover,
+    Chapter target;
+    final progress = context.read<AppState>().history.firstWhere(
+          (p) => p.mangaSlug == widget.slug,
+          orElse: () => ReadingProgress(
+              mangaSlug: '',
+              mangaTitle: '',
+              mangaCover: '',
+              chapterSlug: '',
+              chapterNumber: '',
+              pageIndex: 0),
+        );
+    if (progress.mangaSlug.isNotEmpty) {
+      target = manga!.chapters.firstWhere(
+        (c) => c.slug == progress.chapterSlug,
+        orElse: () => firstChapter!,
       );
-      if (extractChapterInfo) {
-        final info = _parseLatestChapterInfo(searchBlock);
-        manga = manga.copyWith(
-            latestChapterNumber: info.chapter, lastUpdated: info.time);
-      }
-      results.add(manga);
+    } else {
+      target = firstChapter!;
     }
-    return results;
+    _openReader(target);
   }
 
-  _ChapterInfo _parseLatestChapterInfo(String block) {
-    final ch = RegExp(
-        r'<a[^>]+href="[^"]*chapter[^"]*"[^>]*>Chapter\s*([^<]+)</a>');
-    final chMatch = ch.firstMatch(block)?.group(1)?.trim();
-    final time = RegExp(
-        r'<span[^>]+class="[^"]*font-meta[^"]*"[^>]*>([^<]+)</span>');
-    final timeMatch = time.firstMatch(block)?.group(1)?.trim();
-    return _ChapterInfo(chMatch, timeMatch);
-  }
-
-  Manga _parseMangaDetail(String html, String slug) {
-    final titleReg =
-        RegExp(r'<div class="post-title"[^>]*>\s*<h1[^>]*>\s*([^<]+)');
-    final title =
-        titleReg.firstMatch(html)?.group(1) ?? slug.replaceAll('-', ' ');
-    final summaryBlock =
-        RegExp(r'(<div class="summary_image[^"]*">.*?</div>)', dotAll: true)
-                .firstMatch(html)
-                ?.group(1) ??
-            html;
-    final allImgTags = _extractHTMLTags('img', summaryBlock);
-    final cover = _extractImageURL(allImgTags);
-
-    final descReg =
-        RegExp(r'<div class="summary__content[^"]*">(.*?)</div>', dotAll: true);
-    String description = '';
-    if (descReg.firstMatch(html) case var m?) {
-      description = _stripHTML(m.group(1)!).trim();
-    }
-    final ratingReg = RegExp(r'id="averagerate"[^>]*>([^<]+)<');
-    final rating = ratingReg.firstMatch(html)?.group(1) ?? '';
-    final statusReg = RegExp(
-        r'<div class="summary-content">\s*(مستمرة|مكتملة|Ongoing|Completed)\s*</div>');
-    final status = statusReg.firstMatch(html)?.group(1) ?? '';
-    final authorReg =
-        RegExp(r'class="author-content">(.*?)</div>', dotAll: true);
-    final author =
-        authorReg.firstMatch(html)?.group(1)?.let((it) => _stripHTML(it)) ?? '';
-
-    final genres = <String>[];
-    final genreReg = RegExp(r'/manga-genre/[^/]+/">([^<]+)</a>');
-    for (final m in genreReg.allMatches(html)) {
-      genres.add(m.group(1)!);
-    }
-
-    final chapters = <Chapter>[];
-    final chapterBlockReg =
-        RegExp(r'<li class="wp-manga-chapter[^"]*">(.*?)</li>', dotAll: true);
-    for (final m in chapterBlockReg.allMatches(html)) {
-      final block = m.group(1)!;
-      final linkReg =
-          RegExp(r'href="(https?://[^/]+/manga/[^/]+/([^/]+)/)"');
-      final linkMatch = linkReg.firstMatch(block);
-      if (linkMatch != null) {
-        final fullLink = linkMatch.group(1)!;
-        final uri = Uri.parse(fullLink);
-        final slugPart =
-            uri.pathSegments.where((s) => s.isNotEmpty && s != '/').last;
-        final numberReg = RegExp(r'>(\d+)</a>');
-        final numberPart = numberReg.firstMatch(block)?.group(1) ?? slugPart;
-        final dateReg = RegExp(r'i[^>]*>([^<]+)<');
-        final date = dateReg.firstMatch(block)?.group(1)?.trim() ?? '';
-        if (slugPart.isNotEmpty &&
-            !chapters.any((c) => c.slug == slugPart)) {
-          chapters.add(
-              Chapter(slug: slugPart, number: numberPart, date: date));
-        }
-      }
-    }
-    if (chapters.isEmpty) {
-      final fallbackReg = RegExp(
-          r'href="https?://[^/]+/manga/[^/]+/([\d]+(?:-[\d]+)?)/\"[^>]*>\s*(?:<[^>]*>\s*)*(\d+)"');
-      for (final m in fallbackReg.allMatches(html)) {
-        final s = m.group(1)!;
-        final n = m.group(2)!;
-        if (!chapters.any((c) => c.slug == s)) {
-          chapters.add(Chapter(slug: s, number: n));
-        }
-      }
-    }
-    chapters.sort((a, b) =>
-        (int.tryParse(b.number) ?? 0).compareTo(int.tryParse(a.number) ?? 0));
-
-    return Manga(
-      slug: slug,
-      title: _htmlDecode(title),
-      coverURL: cover,
-      genres: genres,
-      status: status,
-      rating: rating,
-      description: description,
-      chapters: chapters,
-      author: author,
+  void _openReader(Chapter ch) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReaderScreen(
+          manga: manga!,
+          chapter: ch,
+          allChapters: sortedChapters,
+        ),
+      ),
     );
   }
 
-  List<String> _parseChapterPages(String html) {
-    final content = _extractReadingContent(html);
-    final seen = <String>{};
-    final pages = <String>[];
-
-    final allImgPattern = r'<img\s[^>]*>';
-    final imgRegex = RegExp(allImgPattern, dotAll: true, caseSensitive: false);
-    for (final match in imgRegex.allMatches(content)) {
-      final tag = match.group(0)!;
-      // تجاهل الصور التي لا تحمل أي من هذه السمات (صور أغلفة، أيقونات)
-      if (!tag.contains('wp-manga-chapter-img') &&
-          !tag.contains('data-src') &&
-          !tag.contains('data-lazy-src')) continue;
-
-      final url = RegExp(r'data-lazy-src="([^"]+)"')
-              .firstMatch(tag)
-              ?.group(1) ??
-          RegExp(r'data-src="([^"]+)"').firstMatch(tag)?.group(1) ??
-          RegExp(r'src="([^"]+)"').firstMatch(tag)?.group(1);
-      if (url != null &&
-          url.startsWith('http') &&
-          !url.contains('data:image') &&
-          !_isLogoOnly(url) &&
-          !seen.contains(url)) {
-        seen.add(url);
-        pages.add(url.trim());
-      }
-    }
-    return pages;
+  Future<void> _downloadSingleChapter(Chapter chapter) async {
+    downloadingChapters.add(chapter.slug);
+    try {
+      final pages = await _service.fetchChapterPages(
+          manga!.slug, chapter.slug);
+      await _dm.downloadChapter(manga: manga!, chapter: chapter, pages: pages);
+    } catch (_) {}
+    downloadingChapters.remove(chapter.slug);
+    setState(() {});
   }
 
-  String _extractReadingContent(String html) {
-    final startPattern =
-        r'<div[^>]+class="[^"]*reading-content[^"]*"[^>]*>';
-    final startRegex = RegExp(startPattern, caseSensitive: false);
-    final startMatch = startRegex.firstMatch(html);
-    if (startMatch == null) return html;
+  Future<void> _downloadSelectedChapters() async {
+    final chapters = manga!.chapters
+        .where((c) => selectedChapters.contains(c.slug))
+        .toList();
+    selectedChapters.clear();
+    setState(() => multiSelectMode = false);
 
-    final startIndex = startMatch.start + startMatch.group(0)!.length;
-    final remaining = html.substring(startIndex);
-    var depth = 1;
-    var currentIndex = 0;
-
-    while (currentIndex < remaining.length && depth > 0) {
-      final remainingString = remaining.substring(currentIndex);
-      final nextDivRegex = RegExp(r'</?div', caseSensitive: false);
-      final nextMatch = nextDivRegex.firstMatch(remainingString);
-      if (nextMatch == null) break;
-
-      final tag = nextMatch.group(0)!;
-      depth += tag.startsWith('</') ? -1 : 1;
-      currentIndex += nextMatch.start + nextMatch.group(0)!.length;
+    for (final chapter in chapters) {
+      downloadingChapters.add(chapter.slug);
+      setState(() {});
+      try {
+        final pages = await _service.fetchChapterPages(
+            manga!.slug, chapter.slug);
+        await _dm.downloadChapter(
+            manga: manga!, chapter: chapter, pages: pages);
+      } catch (_) {}
+      downloadingChapters.remove(chapter.slug);
+      setState(() {});
     }
-
-    if (depth == 0) {
-      return remaining.substring(
-          0, (currentIndex - '</div>'.length).clamp(0, remaining.length));
-    }
-    return remaining;
   }
 
-  String _stripHTML(String html) =>
-      html.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+  @override
+  Widget build(BuildContext context) {
+    final store = context.watch<AppState>();
+    return Scaffold(
+      backgroundColor: AppTheme.bg,
+      appBar: AppBar(
+        backgroundColor: AppTheme.surface,
+        title: Text(manga?.title ?? widget.preloadTitle,
+            style: const TextStyle(
+                color: AppTheme.textPrimary, fontSize: 16)),
+        actions: [
+          if (manga != null)
+            IconButton(
+              icon: Icon(
+                  store.isInLibrary(manga!)
+                      ? Icons.favorite
+                      : Icons.favorite_border,
+                  color: store.isInLibrary(manga!)
+                      ? AppTheme.accent
+                      : AppTheme.textSecondary),
+              onPressed: () => store.isInLibrary(manga!)
+                  ? store.removeFromLibrary(manga!)
+                  : store.addToLibrary(manga!),
+            ),
+          if (manga != null)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert,
+                  color: AppTheme.textSecondary),
+              onSelected: (val) {
+                if (val == 'want') {
+                  store.isWantToRead(manga!)
+                      ? store.removeWantToRead(manga!)
+                      : store.addWantToRead(manga!);
+                } else if (val == 'complete') {
+                  store.isCompleted(manga!)
+                      ? store.removeCompleted(manga!)
+                      : store.addCompleted(manga!);
+                } else if (val == 'multi') {
+                  setState(() {
+                    multiSelectMode = !multiSelectMode;
+                    if (!multiSelectMode) selectedChapters.clear();
+                  });
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                    value: 'want',
+                    child: Text(store.isWantToRead(manga!)
+                        ? 'Remove Want to Read'
+                        : 'Want to Read')),
+                PopupMenuItem(
+                    value: 'complete',
+                    child: Text(store.isCompleted(manga!)
+                        ? 'Unmark Completed'
+                        : 'Completed')),
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                    value: 'multi',
+                    child: Text(multiSelectMode
+                        ? 'Cancel Selection'
+                        : 'Select Chapters')),
+              ],
+            ),
+        ],
+      ),
+      body: isLoading
+          ? _loadingState()
+          : error != null
+              ? _errorState()
+              : _content(manga!, store),
+    );
+  }
 
-  String _htmlDecode(String str) => str
-      .replaceAll('&amp;', '&')
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll('&quot;', '"')
-      .replaceAll('&#039;', "'")
-      .replaceAll('&nbsp;', ' ');
-}
+  Widget _loadingState() => const Center(
+      child: CircularProgressIndicator(color: AppTheme.accent));
 
-class _ChapterInfo {
-  final String? chapter;
-  final String? time;
-  _ChapterInfo(this.chapter, this.time);
-}
+  Widget _errorState() => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 40,
+                color: AppTheme.danger),
+            const SizedBox(height: 12),
+            Text(error!, style: const TextStyle(color: AppTheme.textSecondary)),
+            const SizedBox(height: 12),
+            ElevatedButton(
+                onPressed: _loadDetail, child: const Text('Retry')),
+          ],
+        ),
+      );
 
-extension on String {
-  String capitalize() =>
-      isEmpty ? '' : '${this[0].toUpperCase()}${substring(1)}';
-}
+  Widget _content(Manga m, AppState store) {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Hero section
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: CachedMangaImage(
+                        url: m.highQualityCoverURL,
+                        width: 110,
+                        height: 155)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(m.title,
+                          style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.textPrimary)),
+                      if (m.author.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(m.author,
+                            style: const TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 13)),
+                      ],
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          if (m.status.isNotEmpty) _statusBadge(m.status),
+                          if (m.rating.isNotEmpty)
+                            Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.star,
+                                      size: 12, color: AppTheme.accent),
+                                  const SizedBox(width: 3),
+                                  Text(m.rating,
+                                      style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 12)),
+                                ]),
+                        ],
+                      ),
+                      if (m.genres.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 5,
+                          runSpacing: 5,
+                          children: m.genres
+                              .map((g) => Chip(
+                                    label: Text(g,
+                                        style: const TextStyle(
+                                            color: AppTheme.accent,
+                                            fontSize: 10)),
+                                    backgroundColor: AppTheme.accentDim,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ))
+                              .toList(),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      if (firstChapter != null)
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.play_arrow, size: 16),
+                          label: const Text('Start Reading'),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.accent,
+                              foregroundColor: AppTheme.bg),
+                          onPressed: _startReading,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(color: AppTheme.border),
+          if (m.description.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text('SYNOPSIS',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.textSecondary,
+                      letterSpacing: 2)),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(m.description,
+                  style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 14,
+                      height: 1.4)),
+            ),
+            const Divider(color: AppTheme.border),
+          ],
+          if (multiSelectMode)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.download),
+                label: Text('Download (${selectedChapters.length})'),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accent,
+                    foregroundColor: AppTheme.bg),
+                onPressed: selectedChapters.isEmpty
+                    ? null
+                    : _downloadSelectedChapters,
+              ),
+            ),
+          // Chapters header
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('${m.chapters.length} CHAPTERS',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textSecondary,
+                        letterSpacing: 2)),
+                InkWell(
+                  onTap: () =>
+                      setState(() => chapterSortAsc = !chapterSortAsc),
+                  child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                            chapterSortAsc
+                                ? Icons.arrow_upward
+                                : Icons.arrow_downward,
+                            size: 12,
+                            color: AppTheme.textSecondary),
+                        const SizedBox(width: 4),
+                        Text(chapterSortAsc ? 'Oldest' : 'Newest',
+                            style: const TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 12)),
+                      ]),
+                ),
+              ],
+            ),
+          ),
+          // Chapters list
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: sortedChapters.length,
+            itemBuilder: (_, i) {
+              final ch = sortedChapters[i];
+              final progress = store.history.firstWhere(
+                (p) => p.mangaSlug == m.slug && p.chapterSlug == ch.slug,
+                orElse: () => ReadingProgress(
+                    mangaSlug: '',
+                    mangaTitle: '',
+                    mangaCover: '',
+                    chapterSlug: '',
+                    chapterNumber: '',
+                    pageIndex: 0),
+              );
+              final isDownloaded =
+                  _dm.isDownloaded(m.slug, ch.slug);
+              final isDownloading = downloadingChapters.contains(ch.slug) ||
+                  _dm.isDownloading(m.slug, ch.slug);
 
-extension on Object? {
-  R let<R>(R Function(dynamic) cb) => cb(this);
+              return ListTile(
+                leading: multiSelectMode
+                    ? Icon(
+                        selectedChapters.contains(ch.slug)
+                            ? Icons.check_circle
+                            : Icons.circle_outlined,
+                        color: selectedChapters.contains(ch.slug)
+                            ? AppTheme.accent
+                            : AppTheme.textTertiary)
+                    : null,
+                title: Text('Chapter ${ch.number}',
+                    style: TextStyle(
+                        color: progress.mangaSlug.isNotEmpty
+                            ? AppTheme.textTertiary
+                            : AppTheme.textPrimary,
+                        fontSize: 14)),
+                subtitle: Row(children: [
+                  if (progress.mangaSlug.isNotEmpty) ...[
+                    Text('p.${progress.pageIndex + 1}',
+                        style: const TextStyle(
+                            color: AppTheme.accent, fontSize: 12)),
+                    const SizedBox(width: 8),
+                  ],
+                  if (isDownloaded)
+                    const Icon(Icons.download_done,
+                        color: AppTheme.success, size: 16),
+                  if (isDownloading)
+                    const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: AppTheme.accent)),
+                ]),
+                trailing: const Icon(Icons.chevron_right,
+                    color: AppTheme.textTertiary),
+                onTap: () {
+                  if (multiSelectMode) {
+                    setState(() {
+                      if (selectedChapters.contains(ch.slug)) {
+                        selectedChapters.remove(ch.slug);
+                      } else {
+                        selectedChapters.add(ch.slug);
+                      }
+                    });
+                  } else {
+                    _openReader(ch);
+                  }
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusBadge(String text) => Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: text.toLowerCase().contains('ongoing')
+              ? const Color(0xFF4CAF82).withOpacity(0.12)
+              : AppTheme.textTertiary.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(text,
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: text.toLowerCase().contains('ongoing')
+                    ? const Color(0xFF4CAF82)
+                    : AppTheme.textTertiary)),
+      );
 }
