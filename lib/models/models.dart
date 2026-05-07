@@ -29,7 +29,10 @@ class Manga {
   });
 
   String get highQualityCoverURL {
-    final patterns = ['-110x150', '-150x200', '-200x300', '-300x450', '-193x278', '-350x476'];
+    final patterns = [
+      '-110x150', '-150x200', '-200x300', '-300x450',
+      '-193x278', '-350x476'
+    ];
     String url = coverURL;
     for (var p in patterns) {
       url = url.replaceAll(p, '');
@@ -162,7 +165,8 @@ class ReadingProgress {
         'lastRead': lastRead.toIso8601String(),
       };
 
-  factory ReadingProgress.fromJson(Map<String, dynamic> json) => ReadingProgress(
+  factory ReadingProgress.fromJson(Map<String, dynamic> json) =>
+      ReadingProgress(
         mangaSlug: json['mangaSlug'] ?? '',
         mangaTitle: json['mangaTitle'] ?? '',
         mangaCover: json['mangaCover'] ?? '',
@@ -206,7 +210,8 @@ class DownloadedChapter {
         'downloadedAt': downloadedAt.toIso8601String(),
       };
 
-  factory DownloadedChapter.fromJson(Map<String, dynamic> json) => DownloadedChapter(
+  factory DownloadedChapter.fromJson(Map<String, dynamic> json) =>
+      DownloadedChapter(
         mangaSlug: json['mangaSlug'],
         chapterSlug: json['chapterSlug'],
         chapterNumber: json['chapterNumber'],
@@ -215,4 +220,66 @@ class DownloadedChapter {
         pages: List<String>.from(json['pages'] ?? []),
         downloadedAt: DateTime.parse(json['downloadedAt']),
       );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DownloadedChapter && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+}
+
+class DownloadTask {
+  final String mangaSlug;
+  final String chapterSlug;
+  final String chapterNumber;
+  final String mangaTitle;
+  final String mangaCover;
+  final List<String> pages;
+
+  DownloadTask({
+    required this.mangaSlug,
+    required this.chapterSlug,
+    required this.chapterNumber,
+    required this.mangaTitle,
+    required this.mangaCover,
+    required this.pages,
+  });
+
+  String get id => '${mangaSlug}_$chapterSlug';
+
+  Map<String, dynamic> toJson() => {
+        'mangaSlug': mangaSlug,
+        'chapterSlug': chapterSlug,
+        'chapterNumber': chapterNumber,
+        'mangaTitle': mangaTitle,
+        'mangaCover': mangaCover,
+        'pages': pages,
+      };
+
+  factory DownloadTask.fromJson(Map<String, dynamic> json) => DownloadTask(
+        mangaSlug: json['mangaSlug'],
+        chapterSlug: json['chapterSlug'],
+        chapterNumber: json['chapterNumber'],
+        mangaTitle: json['mangaTitle'] ?? '',
+        mangaCover: json['mangaCover'] ?? '',
+        pages: List<String>.from(json['pages'] ?? []),
+      );
+}
+
+class DownloadedMangaGroup {
+  final String mangaSlug;
+  final String mangaTitle;
+  final String mangaCover;
+  final List<DownloadedChapter> chapters;
+
+  DownloadedMangaGroup({
+    required this.mangaSlug,
+    required this.mangaTitle,
+    required this.mangaCover,
+    required this.chapters,
+  });
+
+  String get id => mangaSlug;
 }
