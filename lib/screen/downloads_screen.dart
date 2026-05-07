@@ -15,7 +15,6 @@ class DownloadsScreen extends StatefulWidget {
 class _DownloadsScreenState extends State<DownloadsScreen> {
   final DownloadManager dm = DownloadManager.shared;
 
-  // تجميع الفصول المحملة حسب المانجا
   List<DownloadedMangaGroup> get downloadedMangas {
     final grouped = dm.downloads.values
         .fold<Map<String, List<DownloadedChapter>>>({}, (map, chapter) {
@@ -171,8 +170,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 }
 
-// MARK: - صفحة تفاصيل المانجا المحملة (فصول محملة فقط)
-
 class DownloadedMangaDetailScreen extends StatefulWidget {
   final String mangaSlug;
   final String mangaTitle;
@@ -257,7 +254,7 @@ class _DownloadedMangaDetailScreenState
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: const [
-                  Icon(Icons.tray, size: 48, color: AppTheme.textTertiary),
+                  Icon(Icons.inbox, size: 48, color: AppTheme.textTertiary),
                   SizedBox(height: 12),
                   Text('No downloaded chapters',
                       style: TextStyle(color: AppTheme.textSecondary)),
@@ -266,7 +263,6 @@ class _DownloadedMangaDetailScreenState
             )
           : Column(
               children: [
-                // Header
                 Padding(
                   padding: const EdgeInsets.all(20),
                   child: Row(
@@ -301,7 +297,6 @@ class _DownloadedMangaDetailScreenState
                   ),
                 ),
                 const Divider(color: AppTheme.border),
-                // Sort header
                 Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 20, vertical: 12),
@@ -334,7 +329,6 @@ class _DownloadedMangaDetailScreenState
                     ],
                   ),
                 ),
-                // Chapters list
                 Expanded(
                   child: ListView.separated(
                     itemCount: chapters.length,
@@ -348,7 +342,7 @@ class _DownloadedMangaDetailScreenState
                                 color: AppTheme.textPrimary,
                                 fontSize: 14)),
                         subtitle: Row(children: [
-                          const Icon(Icons.arrow_down_circle,
+                          const Icon(Icons.download_done,
                               color: AppTheme.success, size: 14),
                           const SizedBox(width: 4),
                           Text('Downloaded',
