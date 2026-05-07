@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../models/models.dart';
-import '../services/cookie_service.dart';
 
 class AppState extends ChangeNotifier {
   static AppState? current;
 
-  // الحالة
   List<ReadingProgress> _history = [];
   List<Manga> _library = [];
   List<Manga> _wantToRead = [];
@@ -19,7 +17,6 @@ class AppState extends ChangeNotifier {
   List<Manga>? _cachedPopular;
   Map<String, Manga> _mangaCache = {};
 
-  // Getters
   List<ReadingProgress> get history => _history;
   List<Manga> get library => _library;
   List<Manga> get wantToRead => _wantToRead;
@@ -37,7 +34,6 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _init() async {
-    await CookieService().init();
     await _loadHistory();
     await _loadLibrary();
     await _loadWantToRead();
@@ -63,12 +59,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> _persistHistory() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('history', jsonEncode(_history.map((e) => e.toJson()).toList()));
+    await prefs.setString(
+        'zmanga_history', jsonEncode(_history.map((e) => e.toJson()).toList()));
   }
 
   Future<void> _loadHistory() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('history');
+    final data = prefs.getString('zmanga_history');
     if (data != null) {
       final list = jsonDecode(data) as List;
       _history = list.map((e) => ReadingProgress.fromJson(e)).toList();
@@ -94,12 +91,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> _persistLibrary() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('library', jsonEncode(_library.map((e) => e.toJson()).toList()));
+    await prefs.setString(
+        'zmanga_library', jsonEncode(_library.map((e) => e.toJson()).toList()));
   }
 
   Future<void> _loadLibrary() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('library');
+    final data = prefs.getString('zmanga_library');
     if (data != null) {
       final list = jsonDecode(data) as List;
       _library = list.map((e) => Manga.fromJson(e)).toList();
@@ -121,16 +119,18 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool isWantToRead(Manga manga) => _wantToRead.any((m) => m.slug == manga.slug);
+  bool isWantToRead(Manga manga) =>
+      _wantToRead.any((m) => m.slug == manga.slug);
 
   Future<void> _persistWantToRead() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('want_to_read', jsonEncode(_wantToRead.map((e) => e.toJson()).toList()));
+    await prefs.setString('zmanga_wanttoread',
+        jsonEncode(_wantToRead.map((e) => e.toJson()).toList()));
   }
 
   Future<void> _loadWantToRead() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('want_to_read');
+    final data = prefs.getString('zmanga_wanttoread');
     if (data != null) {
       final list = jsonDecode(data) as List;
       _wantToRead = list.map((e) => Manga.fromJson(e)).toList();
@@ -156,12 +156,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> _persistCompleted() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('completed', jsonEncode(_completed.map((e) => e.toJson()).toList()));
+    await prefs.setString('zmanga_completed',
+        jsonEncode(_completed.map((e) => e.toJson()).toList()));
   }
 
   Future<void> _loadCompleted() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('completed');
+    final data = prefs.getString('zmanga_completed');
     if (data != null) {
       final list = jsonDecode(data) as List;
       _completed = list.map((e) => Manga.fromJson(e)).toList();
@@ -172,28 +173,31 @@ class AppState extends ChangeNotifier {
   // ---- Home Caching ----
   void saveCachedLatest(List<Manga> items) {
     _cachedLatest = items;
-    _persistCached('cached_latest', items);
+    _persistCached('zmanga_cached_latest', items);
   }
 
   void saveCachedPopular(List<Manga> items) {
     _cachedPopular = items;
-    _persistCached('cached_popular', items);
+    _persistCached('zmanga_cached_popular', items);
   }
 
   Future<void> _persistCached(String key, List<Manga> items) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(key, jsonEncode(items.map((e) => e.toJson()).toList()));
+    await prefs.setString(
+        key, jsonEncode(items.map((e) => e.toJson()).toList()));
   }
 
   Future<void> _loadCached() async {
     final prefs = await SharedPreferences.getInstance();
-    final latest = prefs.getString('cached_latest');
+    final latest = prefs.getString('zmanga_cached_latest');
     if (latest != null) {
-      _cachedLatest = (jsonDecode(latest) as List).map((e) => Manga.fromJson(e)).toList();
+      _cachedLatest =
+          (jsonDecode(latest) as List).map((e) => Manga.fromJson(e)).toList();
     }
-    final popular = prefs.getString('cached_popular');
+    final popular = prefs.getString('zmanga_cached_popular');
     if (popular != null) {
-      _cachedPopular = (jsonDecode(popular) as List).map((e) => Manga.fromJson(e)).toList();
+      _cachedPopular =
+          (jsonDecode(popular) as List).map((e) => Manga.fromJson(e)).toList();
     }
   }
 
@@ -205,12 +209,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> _persistMangaCache() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('manga_cache', jsonEncode(_mangaCache.map((k, v) => MapEntry(k, v.toJson()))));
+    await prefs.setString('zmanga_manga_cache',
+        jsonEncode(_mangaCache.map((k, v) => MapEntry(k, v.toJson()))));
   }
 
   Future<void> _loadMangaCache() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('manga_cache');
+    final data = prefs.getString('zmanga_manga_cache');
     if (data != null) {
       final map = jsonDecode(data) as Map<String, dynamic>;
       _mangaCache = map.map((k, v) => MapEntry(k, Manga.fromJson(v)));
