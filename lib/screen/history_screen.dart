@@ -23,7 +23,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
         backgroundColor: AppTheme.surface,
-        title: const Text('History', style: TextStyle(color: AppTheme.textPrimary)),
+        title: const Text('History',
+            style: TextStyle(color: AppTheme.textPrimary)),
         actions: [
           if (store.history.isNotEmpty)
             IconButton(
@@ -37,11 +38,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: const [
-                  Icon(Icons.schedule, size: 48, color: AppTheme.textTertiary),
+                  Icon(Icons.schedule, size: 48,
+                      color: AppTheme.textTertiary),
                   SizedBox(height: 12),
-                  Text('No reading history', style: TextStyle(color: AppTheme.textSecondary)),
+                  Text('No reading history',
+                      style: TextStyle(color: AppTheme.textSecondary)),
                   Text('Manga you read will appear here',
-                      style: TextStyle(color: AppTheme.textTertiary, fontSize: 13)),
+                      style: TextStyle(
+                          color: AppTheme.textTertiary, fontSize: 13)),
                 ],
               ),
             )
@@ -52,11 +56,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 return ListTile(
                   leading: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: CachedMangaImage(url: p.mangaCover, width: 50, height: 70),
+                    child: CachedMangaImage(
+                        url: p.mangaCover, width: 50, height: 70),
                   ),
                   title: Text(p.mangaTitle,
                       style: const TextStyle(
-                          color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
+                          color: AppTheme.textPrimary,
+                          fontWeight: FontWeight.w600)),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -64,14 +70,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         Text('Ch. ${p.chapterNumber}',
                             style: const TextStyle(color: AppTheme.accent)),
                         Text(' · Page ${p.pageIndex + 1}',
-                            style: const TextStyle(color: AppTheme.textSecondary)),
+                            style: const TextStyle(
+                                color: AppTheme.textSecondary)),
                       ]),
                       Text(_timeAgo(p.lastRead),
                           style: const TextStyle(
                               color: AppTheme.textTertiary, fontSize: 11)),
                     ],
                   ),
-                  trailing: const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
+                  trailing: const Icon(Icons.chevron_right,
+                      color: AppTheme.textTertiary),
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
