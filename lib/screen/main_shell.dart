@@ -33,25 +33,35 @@ class _MainShellState extends State<MainShell> {
     if (_isShowingCloudflare) return;
     _isShowingCloudflare = true;
 
+    // أغلق الـ flag فورًا في AppState لمنع إعادة الفتح
+    // (الـ sheet سيتولى إدارة نفسه)
+    appState.dismissCloudflare();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       isDismissible: false,
+      enableDrag: false,
       builder: (_) => CloudflareBypassSheet(
         url: appState.cloudflareURL!,
         appState: appState,
       ),
-    ).whenComplete(() => _isShowingCloudflare = false);
+    ).whenComplete(() {
+      _isShowingCloudflare = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final net = context.watch<NetworkMonitor>();
-    final appState = context.watch<AppState>(); // ← مراقبة AppState
+    final appState = context.watch<AppState>();
 
+    // نفتح الـ sheet فقط إذا كان مطلوباً ولم يُفتح بعد
     if (appState.showCloudflareSheet && appState.cloudflareURL != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _showCloudflareBypass(context, appState);
+        if (mounted && !_isShowingCloudflare) {
+          _showCloudflareBypass(context, appState);
+        }
       });
     }
 
@@ -93,10 +103,14 @@ class _MainShellState extends State<MainShell> {
             type: BottomNavigationBarType.fixed,
             items: const [
               BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-              BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
-              BottomNavigationBarItem(icon: Icon(Icons.library_books), label: 'Library'),
-              BottomNavigationBarItem(icon: Icon(Icons.download), label: 'Downloads'),
-              BottomNavigationBarItem(icon: Icon(Icons.history), label: 'History'),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.search), label: 'Search'),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.library_books), label: 'Library'),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.download), label: 'Downloads'),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.history), label: 'History'),
             ],
           ),
         ],
