@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:webview_flutter/webview_flutter.dart';
@@ -25,7 +26,7 @@ class MangaService {
     return _chapterWebViewController!;
   }
 
-  // MARK: - fetchHTML عبر URLSession مباشرة
+  // MARK: - fetchHTML عبر HTTP Client مباشرة
   Future<String> fetchHTML(String urlString) async {
     final uri = Uri.parse(urlString);
     final client = HttpClient();
@@ -46,13 +47,8 @@ class MangaService {
         responseBody.contains('Checking your browser') ||
         responseBody.contains('Attention Required')) {
       // Cloudflare detected -> trigger popup
-      final wvHTML = await _fetchHTMLViaWebView(urlString);
-      if (wvHTML.contains('Just a moment') ||
-          wvHTML.contains('Checking your browser')) {
-        AppState.current?.triggerCloudflare(urlString);
-        throw Exception('Cloudflare challenge');
-      }
-      return wvHTML;
+      AppState.current?.triggerCloudflare(urlString);
+      return '';
     }
     if (response.statusCode == 200) {
       return responseBody;
@@ -129,6 +125,20 @@ class MangaService {
 
     // 1. جلب HTML أولاً عبر URLSession للحصول على chapter_id
     final html = await fetchHTML(urlString);
+    if (html.isEmpty) {
+      // إذا كان فارغاً بسبب Cloudflare، جرب WebView
+      try {
+        final wvHTML = await _fetchHTMLViaWebView(urlString);
+        if (wvHTML.contains('Just a moment') ||
+            wvHTML.contains('Checking your browser')) {
+          AppState.current?.triggerCloudflare(urlString);
+          throw Exception('Cloudflare challenge');
+        }
+        return _parseChapterPages(wvHTML);
+      } catch (e) {
+        throw Exception('Cloudflare challenge');
+      }
+    }
 
     // 2. محاولة AJAX (الأسرع)
     final chapterIdPattern =
@@ -147,48 +157,13 @@ class MangaService {
     final directPages = _parseChapterPages(html);
     if (directPages.isNotEmpty) return directPages;
 
-    // 4. آخر حل: WKWebView مع انتظار lazy loading
-    final controller = _getChapterWebViewController();
-    final completer = Completer<String>();
-
-    controller.setNavigationDelegate(NavigationDelegate(
-      onPageFinished: (url) async {
-        // انتظر الـ lazy loading
-        final waitJS = '''
-        new Promise((resolve) => {
-            let tries = 0;
-            const check = () => {
-                tries++;
-                const imgs = document.querySelectorAll('.reading-content img');
-                const ok = Array.from(imgs).some(img => {
-                    const s = img.dataset.lazySrc || img.dataset.src || img.src || '';
-                    return s.startsWith('http') && !s.includes('data:image');
-                });
-                if (ok || tries >= 15) resolve(tries);
-                else setTimeout(check, 200);
-            };
-            setTimeout(check, 500);
-        });
-        ''';
-        await controller.runJavaScript(waitJS);
-        final finalHTML = await controller.runJavaScriptReturningResult(
-          'document.documentElement.outerHTML',
-        ) as String? ?? '';
-        if (!completer.isCompleted) {
-          completer.complete(finalHTML);
-        }
-      },
-      onWebResourceError: (error) {
-        if (!completer.isCompleted) {
-          completer.completeError(Exception('WebView error'));
-        }
-      },
-    ));
-    controller.loadRequest(Uri.parse(urlString));
-
-    final finalHTML =
-        await completer.future.timeout(const Duration(seconds: 30));
-    return _parseChapterPages(finalHTML);
+    // 4. آخر حل: WebView مع انتظار lazy loading
+    try {
+      final wvHTML = await _fetchHTMLViaWebView(urlString);
+      return _parseChapterPages(wvHTML);
+    } catch (e) {
+      return [];
+    }
   }
 
   // MARK: - AJAX Image Fetching
@@ -216,8 +191,8 @@ class MangaService {
       } catch (_) {}
       try {
         final Map<String, dynamic> dict = jsonDecode(responseBody);
-        if (dict.containsKey('data') && dict['data'] is List) {
-          return (dict['data'] as List)
+        if (dict['data'] is Map && dict['data']['images'] is List) {
+          return (dict['data']['images'] as List)
               .map((e) => e['url'] as String?)
               .where((url) => url != null && url.startsWith('http'))
               .cast<String>()
@@ -281,7 +256,9 @@ class MangaService {
         slug
             .replaceAll('-', ' ')
             .split(' ')
-            .map((w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
+            .map((w) => w.isNotEmpty
+                ? '${w[0].toUpperCase()}${w.substring(1)}'
+                : '')
             .join(' ');
 
     final allImgTags = _extractHTMLTags('img', block);
@@ -375,8 +352,9 @@ class MangaService {
         titleReg.firstMatch(html)?.group(1) ?? slug.replaceAll('-', ' ');
     final summaryBlock =
         RegExp(r'(<div class="summary_image[^"]*">.*?</div>)', dotAll: true)
-            .firstMatch(html)
-            ?.group(1) ?? html;
+                .firstMatch(html)
+                ?.group(1) ??
+            html;
     final allImgTags = _extractHTMLTags('img', summaryBlock);
     final cover = _extractImageURL(allImgTags);
 
@@ -416,10 +394,8 @@ class MangaService {
         final slugPart =
             uri.pathSegments.where((s) => s.isNotEmpty && s != '/').last;
         final numberReg = RegExp(r'>(\d+)</a>');
-        final numberPart =
-            numberReg.firstMatch(block)?.group(1) ?? slugPart;
-        final dateReg = RegExp(
-            r'i[^>]*>([^<]+)<');
+        final numberPart = numberReg.firstMatch(block)?.group(1) ?? slugPart;
+        final dateReg = RegExp(r'i[^>]*>([^<]+)<');
         final date = dateReg.firstMatch(block)?.group(1)?.trim() ?? '';
         if (slugPart.isNotEmpty &&
             !chapters.any((c) => c.slug == slugPart)) {
@@ -469,7 +445,9 @@ class MangaService {
           !tag.contains('data-src') &&
           !tag.contains('data-lazy-src')) continue;
 
-      final url = RegExp(r'data-lazy-src="([^"]+)"').firstMatch(tag)?.group(1) ??
+      final url = RegExp(r'data-lazy-src="([^"]+)"')
+              .firstMatch(tag)
+              ?.group(1) ??
           RegExp(r'data-src="([^"]+)"').firstMatch(tag)?.group(1) ??
           RegExp(r'src="([^"]+)"').firstMatch(tag)?.group(1);
       if (url != null &&
