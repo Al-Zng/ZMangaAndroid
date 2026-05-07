@@ -35,7 +35,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
         list = store.completed;
         break;
       case Category.downloaded:
-        final slugs = DownloadManager.shared.downloads.values.map((e) => e.mangaSlug).toSet();
+        final slugs = DownloadManager.shared.downloads.values
+            .map((e) => e.mangaSlug)
+            .toSet();
         list = (store.library + store.wantToRead + store.completed)
             .where((m) => slugs.contains(m.slug))
             .toList();
@@ -77,7 +79,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort, color: AppTheme.textSecondary),
             onSelected: (val) => setState(() {
-              _sortOption = val == 'Title' ? SortOption.title : SortOption.dateAdded;
+              _sortOption =
+                  val == 'Title' ? SortOption.title : SortOption.dateAdded;
             }),
             itemBuilder: (_) => ['Date Added', 'Title']
                 .map((s) => PopupMenuItem(value: s, child: Text(s)))
@@ -87,12 +90,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
       body: Column(
         children: [
+          // Category tabs
           Container(
             height: 50,
             color: AppTheme.surface,
             child: ListView(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               children: Category.values.map((cat) {
                 final selected = cat == _selectedCategory;
                 return Padding(
@@ -103,12 +108,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       label: Text(
                         cat.name[0].toUpperCase() + cat.name.substring(1),
                         style: TextStyle(
-                          color: selected ? AppTheme.bg : AppTheme.textSecondary,
+                          color: selected
+                              ? AppTheme.bg
+                              : AppTheme.textSecondary,
                           fontSize: 12,
                         ),
                       ),
-                      backgroundColor: selected ? AppTheme.accent : AppTheme.card,
-                      side: BorderSide(color: selected ? Colors.transparent : AppTheme.border),
+                      backgroundColor:
+                          selected ? AppTheme.accent : AppTheme.card,
+                      side: BorderSide(
+                          color: selected
+                              ? Colors.transparent
+                              : AppTheme.border),
                     ),
                   ),
                 );
@@ -116,21 +127,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
           ),
           const Divider(color: AppTheme.border, height: 1),
+          // Grid
           Expanded(
             child: items.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.library_books, size: 48, color: AppTheme.textTertiary),
+                        Icon(Icons.library_books,
+                            size: 48, color: AppTheme.textTertiary),
                         const SizedBox(height: 12),
-                        const Text('No manga here', style: TextStyle(color: AppTheme.textSecondary)),
+                        const Text('No manga here',
+                            style: TextStyle(color: AppTheme.textSecondary)),
                       ],
                     ),
                   )
                 : GridView.builder(
                     padding: const EdgeInsets.all(12),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 3,
                       childAspectRatio: 0.65,
                       crossAxisSpacing: 12,
@@ -159,17 +174,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 children: [
                                   ClipRRect(
                                     borderRadius: BorderRadius.circular(12),
-                                    child: CachedMangaImage(url: m.highQualityCoverURL),
+                                    child: CachedMangaImage(
+                                        url: m.highQualityCoverURL),
                                   ),
                                   Positioned(
                                     top: 4,
                                     right: 4,
-                                    child: Icon(Icons.favorite, size: 16, color: AppTheme.accent),
+                                    child: Icon(Icons.favorite,
+                                        size: 16, color: AppTheme.accent),
                                   ),
                                 ],
                               ),
                             ),
-                            Text(m.title, maxLines: 2, style: const TextStyle(fontSize: 11, color: AppTheme.textPrimary)),
+                            Text(m.title,
+                                maxLines: 2,
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppTheme.textPrimary)),
                           ],
                         ),
                       );
