@@ -23,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<Manga> popularManga = [];
   bool isLoadingLatest = false;
   bool isLoadingPopular = false;
+  bool hasLoadError = false;
   int latestPage = 1;
   bool loadingMoreLatest = false;
   int _lastReloadTrigger = 0;
@@ -93,7 +94,10 @@ class _HomeScreenState extends State<HomeScreen>
       context.read<AppState>().saveCachedLatest(List.from(latestManga));
     } catch (e) {
       if (!mounted) return;
-      setState(() => isLoadingLatest = false);
+      setState(() {
+        isLoadingLatest = false;
+        if (latestManga.isEmpty) hasLoadError = true;
+      });
     }
   }
 
@@ -178,6 +182,38 @@ class _HomeScreenState extends State<HomeScreen>
                               padding: EdgeInsets.all(32),
                               child: CircularProgressIndicator(
                                   color: AppTheme.accent),
+                            ),
+                          ),
+                        )
+                      else if (hasLoadError && latestManga.isEmpty)
+                        SliverToBoxAdapter(
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Column(
+                                children: [
+                                  const Icon(Icons.cloud_off,
+                                      size: 48, color: AppTheme.textTertiary),
+                                  const SizedBox(height: 12),
+                                  const Text('فشل تحميل المحتوى',
+                                      style: TextStyle(
+                                          color: AppTheme.textSecondary)),
+                                  const SizedBox(height: 16),
+                                  ElevatedButton.icon(
+                                    onPressed: () {
+                                      setState(() => hasLoadError = false);
+                                      _loadLatest(reset: true);
+                                      _loadPopular();
+                                    },
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('إعادة المحاولة'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppTheme.accent,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         )

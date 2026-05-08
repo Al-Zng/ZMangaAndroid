@@ -46,7 +46,8 @@ class MangaService {
         if (solved) {
           return fetchHTML(urlString, retryCount: retryCount + 1);
         } else {
-          throw Exception('Cloudflare: user dismissed');
+          // المستخدم أغلق الـ sheet بدون حل — ارجع فارغ بدل crash
+          return '';
         }
       }
 
@@ -65,7 +66,7 @@ class MangaService {
         if (solved) {
           return fetchHTML(urlString, retryCount: retryCount + 1);
         }
-        throw Exception('Cloudflare: user dismissed');
+        return '';
       }
 
       throw Exception('Network error: $e');
