@@ -1,9 +1,8 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../state/app_state.dart';
 
+// مطابق لـ iOS CloudflareSheet + CloudflareWebViewRepresentable
 class CloudflareBypassSheet extends StatefulWidget {
   final String url;
   final AppState appState;
@@ -22,19 +21,15 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
   late WebViewController _controller;
   bool _solved = false;
   bool _isLoading = true;
-  int _pageLoadCount = 0;
+  int _navCount = 0;
+  final String _originalUrl;
 
-  String get _baseDomain {
-    try {
-      return Uri.parse(widget.url).host;
-    } catch (_) {
-      return '';
-    }
-  }
+  _CloudflareBypassSheetState() : _originalUrl = '';
 
   @override
   void initState() {
     super.initState();
+
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent(
@@ -48,92 +43,67 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
         },
         onPageFinished: (url) {
           if (mounted) setState(() => _isLoading = false);
-          _onPageFinished(url);
+          _didFinishNavigation(url);
         },
         onNavigationRequest: (_) => NavigationDecision.navigate,
       ))
       ..loadRequest(Uri.parse(widget.url));
   }
 
-  Future<void> _onPageFinished(String currentUrl) async {
+  // مطابق لـ iOS Coordinator.webView(_:didFinish:)
+  Future<void> _didFinishNavigation(String currentUrl) async {
     if (_solved) return;
-    _pageLoadCount++;
+    _navCount++;
 
     // انتظر استقرار الصفحة
-    await Future.delayed(const Duration(milliseconds: 1500));
-    if (!mounted || _solved) return;
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (_solved || !mounted) return;
 
-    await _checkSolved(currentUrl);
+    // فحص URL — مثل iOS
+    final currentUri = Uri.tryParse(currentUrl);
+    final originalUri = Uri.tryParse(widget.url);
+    final urlChanged = currentUri?.host != originalUri?.host ||
+        (currentUrl != widget.url &&
+            !currentUrl.contains('cdn-cgi/l/chk_jschl'));
+
+    if (urlChanged && _navCount > 1) {
+      await _checkTitleAndSucceed();
+      return;
+    }
+
+    await _checkTitleAndSucceed();
   }
 
-  Future<void> _checkSolved(String currentUrl) async {
+  // مطابق لـ iOS evaluateJavaScript("document.title")
+  Future<void> _checkTitleAndSucceed() async {
     if (_solved) return;
-
     try {
-      // فحص عنوان الصفحة — الأداة الأكثر موثوقية
-      final rawTitle = await _controller.runJavaScriptReturningResult(
-        'document.title || ""',
-      );
+      final rawTitle =
+          await _controller.runJavaScriptReturningResult('document.title');
       final title = rawTitle.toString().replaceAll('"', '').toLowerCase().trim();
 
-      final isStillChallenge =
-          title.isEmpty ||
-          title.contains('just a moment') ||
-          title.contains('cloudflare') ||
-          title.contains('checking') ||
-          title.contains('please wait') ||
+      final isCloudflare = title.contains('just a moment') ||
           title.contains('attention required') ||
-          title.contains('لحظة') ||
-          title.contains('one moment');
+          title.contains('checking your browser') ||
+          title.contains('cloudflare') ||
+          title.contains('please wait');
 
-      // إذا لم نعد في صفحة التحدي بعد أول تحميل = تم الحل
-      if (!isStillChallenge && _pageLoadCount > 1) {
-        await _finalizeSolve();
-        return;
-      }
-
-      // محاولة قراءة أي كوكيز متاحة
-      final cookieResult = await _controller.runJavaScriptReturningResult(
-        r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
-      );
-      final cookies = cookieResult.toString().replaceAll('"', '').trim();
-
-      // إذا وُجدت كوكيز وليس في صفحة تحدي بعد التحميل الأول
-      if (cookies.isNotEmpty &&
-          cookies != 'null' &&
-          !isStillChallenge &&
-          _pageLoadCount > 1) {
-        await _finalizeSolve(cookies: cookies);
-        return;
-      }
-
-      // فحص إضافي: إذا كان URL تغيّر بعيداً عن صفحة التحدي
-      if (_pageLoadCount > 1 &&
-          currentUrl.contains(_baseDomain) &&
-          !isStillChallenge) {
-        await _finalizeSolve(cookies: cookies.isNotEmpty ? cookies : null);
+      if (!isCloudflare && title.isNotEmpty) {
+        await _copyCookiesAndSucceed();
       }
     } catch (e) {
-      debugPrint('CF check error: $e');
+      debugPrint('CF title check error: $e');
     }
   }
 
-  Future<void> _finalizeSolve({String? cookies}) async {
+  // مطابق لـ iOS copyCookiesAndSucceed
+  // في Android: الكوكيز موجودة في الـ WebView CookieManager — 
+  // MangaService يستخدم نفس الـ WebView فالكوكيز مشتركة تلقائياً
+  Future<void> _copyCookiesAndSucceed() async {
     if (_solved) return;
     _solved = true;
 
-    // احفظ الكوكيز
-    if (cookies != null && cookies.isNotEmpty) {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('cf_cookies', cookies);
-        await prefs.setString('cf_domain', _baseDomain);
-        await prefs.setInt(
-            'cf_timestamp', DateTime.now().millisecondsSinceEpoch);
-      } catch (_) {}
-    }
-
-    // أبلغ AppState بالنجاح — هذا سيُطلق الـ completers في MangaService
+    // مثل iOS: store.cookiesReady = true, store.activeChallenge = nil, store.triggerReload()
     widget.appState.onCloudflareSolved();
 
     if (mounted) {
@@ -142,9 +112,9 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
     }
   }
 
-  void _forceClose() {
+  void _cancel() {
     if (_solved) return;
-    // أبلغ AppState بالإغلاق — هذا سيُطلق الـ completers بـ false
+    // مثل iOS: store.activeChallenge = nil (بدون triggerReload)
     widget.appState.onCloudflareDismissed();
     Navigator.of(context).pop(false);
   }
@@ -153,76 +123,103 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (_) => _forceClose(),
+      onPopInvoked: (_) => _cancel(),
       child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.85,
+        height: MediaQuery.of(context).size.height * 0.88,
         child: Column(
           children: [
-            // ─── Header ───────────────────────────────────────────
+            // ─── Header — مطابق لـ iOS NavigationView + toolbar ──────
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+                color: const Color(0xFF1C1C1E),
+                border: Border(
+                    bottom: BorderSide(color: Colors.white.withOpacity(0.08))),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'تحقق من الأمان',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          'اضغط على المربع ثم انتظر',
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[500]),
-                        ),
-                      ],
+                  // Drag handle
+                  Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  if (_isLoading)
-                    const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    Icon(Icons.shield_outlined,
-                        size: 20, color: Colors.grey[400]),
-                  const SizedBox(width: 12),
-                  TextButton(
-                    onPressed: _forceClose,
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.redAccent,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
+                  Row(
+                    children: [
+                      // Cancel — مثل iOS "Cancel" button
+                      TextButton(
+                        onPressed: _cancel,
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFCC8C14),
+                          padding: EdgeInsets.zero,
+                        ),
+                        child: const Text('إغلاق',
+                            style: TextStyle(fontSize: 15)),
+                      ),
+                      const Spacer(),
+                      // Icon + Title — مثل iOS shield icon
+                      if (_isLoading)
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Color(0xFFCC8C14)),
+                        )
+                      else
+                        const Icon(Icons.shield_outlined,
+                            color: Color(0xFFCC8C14), size: 18),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'تحقق من الأمان',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const Spacer(),
+                      // Done — مثل iOS "Done" button
+                      TextButton(
+                        onPressed: _solved ? null : _copyCookiesAndSucceed,
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFCC8C14),
+                          padding: EdgeInsets.zero,
+                        ),
+                        child: const Text('تم',
+                            style: TextStyle(fontSize: 15,
+                                fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // Subtitle
+                  Text(
+                    'أكمل التحقق أدناه للمتابعة',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withOpacity(0.4),
                     ),
-                    child: const Text('إغلاق'),
                   ),
                 ],
               ),
             ),
-
-            // ─── WebView ──────────────────────────────────────────
+            // ─── WebView ──────────────────────────────────────────────
             Expanded(
               child: Stack(
                 children: [
                   WebViewWidget(controller: _controller),
                   if (_isLoading)
                     Container(
-                      color: Colors.black.withOpacity(0.05),
-                      child: const Center(child: CircularProgressIndicator()),
+                      color: const Color(0xFF0F0F0F).withOpacity(0.6),
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                            color: Color(0xFFCC8C14)),
+                      ),
                     ),
                 ],
               ),
