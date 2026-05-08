@@ -1,36 +1,82 @@
-import 'package:flutter/material.dart';
-import 'cookie_service.dart';
-import 'webview_verification.dart';
-import '../../state/app_state.dart';
+import 'dart:convert';
 
-class CloudflareService {
-  static final CloudflareService _instance = CloudflareService._internal();
-  factory CloudflareService() => _instance;
-  CloudflareService._internal();
+import 'package:shared_preferences/shared_preferences.dart';
 
-  final _cookieService = CookieService();
+class CookieService {
+  static const _cookiesKey = 'cloudflare_cookies';
+  static const _expiryKey = 'cloudflare_expiry';
 
-  Future<void> ensureVerified(BuildContext context, String url) async {
-    if (await _cookieService.hasValidSession()) {
-      return;
-    }
+  Future<void> saveCookies({
+    required Map<String, String> cookies,
+    String? cfClearance,
+    String? phpSessionId,
+    String? wordpressLoggedIn,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
 
-    final result = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => VerificationScreen(url: url),
-        fullscreenDialog: true,
-      ),
+    final data = {
+      'cookies': cookies,
+      'cf_clearance': cfClearance,
+      'PHPSESSID': phpSessionId,
+      'wordpress_logged_in': wordpressLoggedIn,
+      'saved_at': DateTime.now().millisecondsSinceEpoch,
+    };
+
+    await prefs.setString(
+      _cookiesKey,
+      jsonEncode(data),
     );
 
-    if (result == true) {
-      AppState.current?.triggerReload();
-    }
+    await prefs.setInt(
+      _expiryKey,
+      DateTime.now()
+          .add(const Duration(days: 7))
+          .millisecondsSinceEpoch,
+    );
   }
 
-  bool isCloudflareResponse(int statusCode, String body) {
-    return statusCode == 403 ||
-        statusCode == 503 ||
-        body.contains('Just a moment') ||
-        body.contains('cf-browser-verification');
+  Future<String> getCookieHeader() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final raw = prefs.getString(_cookiesKey);
+
+    if (raw == null) return '';
+
+    final decoded = jsonDecode(raw);
+
+    final Map<String, dynamic> cookies =
+        Map<String, dynamic>.from(decoded['cookies']);
+
+    return cookies.entries
+        .map((e) => '${e.key}=${e.value}')
+        .join('; ');
+  }
+
+  Future<bool> hasValidSession() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final expiry = prefs.getInt(_expiryKey);
+
+    if (expiry == null) return false;
+
+    if (DateTime.now().millisecondsSinceEpoch > expiry) {
+      await clearCookies();
+      return false;
+    }
+
+    final raw = prefs.getString(_cookiesKey);
+
+    if (raw == null) return false;
+
+    final decoded = jsonDecode(raw);
+
+    return decoded['cf_clearance'] != null;
+  }
+
+  Future<void> clearCookies() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.remove(_cookiesKey);
+    await prefs.remove(_expiryKey);
   }
 }
