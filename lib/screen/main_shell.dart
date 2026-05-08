@@ -33,9 +33,8 @@ class _MainShellState extends State<MainShell> {
     if (_isShowingCloudflare) return;
     _isShowingCloudflare = true;
 
-    // أغلق الـ flag فورًا في AppState لمنع إعادة الفتح
-    // (الـ sheet سيتولى إدارة نفسه)
-    appState.dismissCloudflare();
+    // احفظ الـ URL قبل الفتح (لا تستدع dismissCloudflare هنا)
+    final cfUrl = appState.cloudflareURL!;
 
     showModalBottomSheet(
       context: context,
@@ -43,7 +42,7 @@ class _MainShellState extends State<MainShell> {
       isDismissible: false,
       enableDrag: false,
       builder: (_) => CloudflareBypassSheet(
-        url: appState.cloudflareURL!,
+        url: cfUrl,
         appState: appState,
       ),
     ).whenComplete(() {
@@ -56,7 +55,7 @@ class _MainShellState extends State<MainShell> {
     final net = context.watch<NetworkMonitor>();
     final appState = context.watch<AppState>();
 
-    // نفتح الـ sheet فقط إذا كان مطلوباً ولم يُفتح بعد
+    // افتح الـ sheet فقط إذا طُلب ولم يُفتح بعد
     if (appState.showCloudflareSheet && appState.cloudflareURL != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !_isShowingCloudflare) {
