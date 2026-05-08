@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../state/app_state.dart';
 
-// مطابق لـ iOS CloudflareSheet + CloudflareWebViewRepresentable
 class CloudflareBypassSheet extends StatefulWidget {
   final String url;
   final AppState appState;
@@ -22,14 +21,10 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
   bool _solved = false;
   bool _isLoading = true;
   int _navCount = 0;
-  final String _originalUrl;
-
-  _CloudflareBypassSheetState() : _originalUrl = '';
 
   @override
   void initState() {
     super.initState();
-
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent(
@@ -50,37 +45,23 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
       ..loadRequest(Uri.parse(widget.url));
   }
 
-  // مطابق لـ iOS Coordinator.webView(_:didFinish:)
   Future<void> _didFinishNavigation(String currentUrl) async {
     if (_solved) return;
     _navCount++;
 
-    // انتظر استقرار الصفحة
     await Future.delayed(const Duration(milliseconds: 800));
     if (_solved || !mounted) return;
-
-    // فحص URL — مثل iOS
-    final currentUri = Uri.tryParse(currentUrl);
-    final originalUri = Uri.tryParse(widget.url);
-    final urlChanged = currentUri?.host != originalUri?.host ||
-        (currentUrl != widget.url &&
-            !currentUrl.contains('cdn-cgi/l/chk_jschl'));
-
-    if (urlChanged && _navCount > 1) {
-      await _checkTitleAndSucceed();
-      return;
-    }
 
     await _checkTitleAndSucceed();
   }
 
-  // مطابق لـ iOS evaluateJavaScript("document.title")
   Future<void> _checkTitleAndSucceed() async {
     if (_solved) return;
     try {
       final rawTitle =
           await _controller.runJavaScriptReturningResult('document.title');
-      final title = rawTitle.toString().replaceAll('"', '').toLowerCase().trim();
+      final title =
+          rawTitle.toString().replaceAll('"', '').toLowerCase().trim();
 
       final isCloudflare = title.contains('just a moment') ||
           title.contains('attention required') ||
@@ -89,22 +70,26 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
           title.contains('please wait');
 
       if (!isCloudflare && title.isNotEmpty) {
-        await _copyCookiesAndSucceed();
+        await _succeed();
       }
-    } catch (e) {
-      debugPrint('CF title check error: $e');
-    }
+    } catch (_) {}
   }
 
-  // مطابق لـ iOS copyCookiesAndSucceed
-  // في Android: الكوكيز موجودة في الـ WebView CookieManager — 
-  // MangaService يستخدم نفس الـ WebView فالكوكيز مشتركة تلقائياً
-  Future<void> _copyCookiesAndSucceed() async {
+  Future<void> _succeed() async {
     if (_solved) return;
     _solved = true;
 
-    // مثل iOS: store.cookiesReady = true, store.activeChallenge = nil, store.triggerReload()
-    widget.appState.onCloudflareSolved();
+    // استخرج الكوكيز من الـ WebView وأرسلها لـ AppState
+    String? cookies;
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
+      );
+      final raw = result.toString().replaceAll('"', '').trim();
+      if (raw.isNotEmpty && raw != 'null') cookies = raw;
+    } catch (_) {}
+
+    widget.appState.onCloudflareSolved(cookies: cookies);
 
     if (mounted) {
       await Future.delayed(const Duration(milliseconds: 100));
@@ -114,7 +99,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
 
   void _cancel() {
     if (_solved) return;
-    // مثل iOS: store.activeChallenge = nil (بدون triggerReload)
     widget.appState.onCloudflareDismissed();
     Navigator.of(context).pop(false);
   }
@@ -128,17 +112,16 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
         height: MediaQuery.of(context).size.height * 0.88,
         child: Column(
           children: [
-            // ─── Header — مطابق لـ iOS NavigationView + toolbar ──────
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
                 color: const Color(0xFF1C1C1E),
                 border: Border(
-                    bottom: BorderSide(color: Colors.white.withOpacity(0.08))),
+                    bottom:
+                        BorderSide(color: Colors.white.withOpacity(0.08))),
               ),
               child: Column(
                 children: [
-                  // Drag handle
                   Container(
                     width: 36,
                     height: 4,
@@ -150,7 +133,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                   ),
                   Row(
                     children: [
-                      // Cancel — مثل iOS "Cancel" button
                       TextButton(
                         onPressed: _cancel,
                         style: TextButton.styleFrom(
@@ -161,7 +143,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                             style: TextStyle(fontSize: 15)),
                       ),
                       const Spacer(),
-                      // Icon + Title — مثل iOS shield icon
                       if (_isLoading)
                         const SizedBox(
                           width: 18,
@@ -183,32 +164,29 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                         ),
                       ),
                       const Spacer(),
-                      // Done — مثل iOS "Done" button
                       TextButton(
-                        onPressed: _solved ? null : _copyCookiesAndSucceed,
+                        onPressed: _solved ? null : _succeed,
                         style: TextButton.styleFrom(
                           foregroundColor: const Color(0xFFCC8C14),
                           padding: EdgeInsets.zero,
                         ),
                         child: const Text('تم',
-                            style: TextStyle(fontSize: 15,
+                            style: TextStyle(
+                                fontSize: 15,
                                 fontWeight: FontWeight.w600)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  // Subtitle
                   Text(
                     'أكمل التحقق أدناه للمتابعة',
                     style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withOpacity(0.4),
-                    ),
+                        fontSize: 12,
+                        color: Colors.white.withOpacity(0.4)),
                   ),
                 ],
               ),
             ),
-            // ─── WebView ──────────────────────────────────────────────
             Expanded(
               child: Stack(
                 children: [

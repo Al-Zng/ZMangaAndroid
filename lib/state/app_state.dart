@@ -14,7 +14,7 @@ class AppState extends ChangeNotifier {
   // ─── Cloudflare ───────────────────────────────────────────────────
   bool _showCloudflareSheet = false;
   String? _cloudflareURL;
-  // عداد يتغير فقط عند حل Cloudflare — الـ screens تستمع لهذا
+  String? _cfCookies; // كوكيز Cloudflare المحفوظة من الـ sheet
   int _reloadTrigger = 0;
 
   // ─── Cache ────────────────────────────────────────────────────────
@@ -28,6 +28,7 @@ class AppState extends ChangeNotifier {
   List<Manga> get completed => _completed;
   bool get showCloudflareSheet => _showCloudflareSheet;
   String? get cloudflareURL => _cloudflareURL;
+  String? get cfCookies => _cfCookies;
   int get reloadTrigger => _reloadTrigger;
   List<Manga>? get cachedLatest => _cachedLatest;
   List<Manga>? get cachedPopular => _cachedPopular;
@@ -240,10 +241,10 @@ class AppState extends ChangeNotifier {
   }
 
   /// يُستدعى من CloudflareBypassSheet عند النجاح — مثل iOS
-  void onCloudflareSolved() {
+  void onCloudflareSolved({String? cookies}) {
     _showCloudflareSheet = false;
+    if (cookies != null && cookies.isNotEmpty) _cfCookies = cookies;
     notifyListeners();
-    // أطلق reload لكل الـ screens المستمعة — مثل iOS onChange(of: reloadTrigger)
     _reloadTrigger++;
     notifyListeners();
   }
