@@ -24,35 +24,25 @@ class _HomeScreenState extends State<HomeScreen> {
   bool isLoadingPopular = false;
   int latestPage = 1;
   bool loadingMoreLatest = false;
-  int _lastReloadTrigger = -1;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _lastReloadTrigger = context.read<AppState>().reloadTrigger;
-        _loadInitial();
-        context.read<AppState>().addListener(_onAppStateChanged);
-      }
+      _loadInitial();
+      context.read<AppState>().addListener(_onReloadTrigger);
     });
   }
 
   @override
   void dispose() {
-    context.read<AppState>().removeListener(_onAppStateChanged);
+    context.read<AppState>().removeListener(_onReloadTrigger);
     super.dispose();
   }
 
-  // مثل iOS: .onChange(of: store.reloadTrigger)
-  void _onAppStateChanged() {
-    if (!mounted) return;
-    final appState = context.read<AppState>();
-    if (appState.reloadTrigger != _lastReloadTrigger) {
-      _lastReloadTrigger = appState.reloadTrigger;
-      _loadLatest(reset: true);
-      _loadPopular();
-    }
+  void _onReloadTrigger() {
+    _loadLatest(reset: true);
+    _loadPopular();
   }
 
   Future<void> _loadInitial() async {

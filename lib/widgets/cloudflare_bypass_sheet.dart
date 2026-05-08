@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../state/app_state.dart';
 
@@ -20,11 +22,21 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
   late WebViewController _controller;
   bool _solved = false;
   bool _isLoading = true;
-  int _navCount = 0;
+  int _pageLoadCount = 0;
+
+  String get _baseDomain {
+    try {
+      final uri = Uri.parse(widget.url);
+      return uri.host;
+    } catch (_) {
+      return '';
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent(
@@ -33,156 +45,173 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
         'Chrome/120.0.0.0 Mobile Safari/537.36',
       )
       ..setNavigationDelegate(NavigationDelegate(
-        onPageStarted: (_) {
+        onPageStarted: (url) {
           if (mounted) setState(() => _isLoading = true);
         },
         onPageFinished: (url) {
           if (mounted) setState(() => _isLoading = false);
-          _didFinishNavigation(url);
+          _onPageFinished(url);
         },
-        onNavigationRequest: (_) => NavigationDecision.navigate,
+        onNavigationRequest: (request) {
+          return NavigationDecision.navigate;
+        },
       ))
       ..loadRequest(Uri.parse(widget.url));
   }
 
-  Future<void> _didFinishNavigation(String currentUrl) async {
-    if (_solved) return;
-    _navCount++;
-
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (_solved || !mounted) return;
-
-    await _checkTitleAndSucceed();
+  @override
+  void dispose() {
+    super.dispose();
   }
 
-  Future<void> _checkTitleAndSucceed() async {
+  Future<void> _onPageFinished(String currentUrl) async {
     if (_solved) return;
-    try {
-      final rawTitle =
-          await _controller.runJavaScriptReturningResult('document.title');
-      final title =
-          rawTitle.toString().replaceAll('"', '').toLowerCase().trim();
+    _pageLoadCount++;
 
-      final isCloudflare = title.contains('just a moment') ||
-          title.contains('attention required') ||
-          title.contains('checking your browser') ||
-          title.contains('cloudflare') ||
-          title.contains('please wait');
+    // انتظر استقرار الـ DOM
+    await Future.delayed(const Duration(milliseconds: 1200));
+    if (!mounted || _solved) return;
 
-      if (!isCloudflare && title.isNotEmpty) {
-        await _succeed();
-      }
-    } catch (_) {}
+    await _attemptSolve(currentUrl);
   }
 
-  Future<void> _succeed() async {
+  Future<void> _attemptSolve(String currentUrl) async {
     if (_solved) return;
-    _solved = true;
 
-    // استخرج الكوكيز من الـ WebView وأرسلها لـ AppState
-    String? cookies;
     try {
-      final result = await _controller.runJavaScriptReturningResult(
-        r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
+      // فحص عنوان الصفحة
+      final titleResult = await _controller.runJavaScriptReturningResult(
+        'document.title',
       );
-      final raw = result.toString().replaceAll('"', '').trim();
-      if (raw.isNotEmpty && raw != 'null') cookies = raw;
-    } catch (_) {}
+      final title = titleResult.toString().replaceAll('"', '').toLowerCase();
 
-    widget.appState.onCloudflareSolved(cookies: cookies);
+      final bool isChallengePage =
+          title.contains('just a moment') ||
+          title.contains('cloudflare') ||
+          title.contains('checking your browser') ||
+          title.contains('please wait') ||
+          title.contains('attention required') ||
+          title.contains('لحظة') ||
+          title.isEmpty;
 
-    if (mounted) {
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (mounted) Navigator.of(context).pop(true);
+      // إذا لم تعد صفحة تحدي بعد أول تحميل
+      if (!isChallengePage && _pageLoadCount > 1) {
+        await _finalizeSolve();
+        return;
+      }
+
+      // محاولة قراءة الكوكيز القابلة للقراءة عبر JS
+      final cookieResult = await _controller.runJavaScriptReturningResult(
+        r'''
+        (function() {
+          try {
+            var c = document.cookie;
+            if (c && c.length > 0) { return c; }
+          } catch(e) {}
+          return '__empty__';
+        })()
+        ''',
+      );
+
+      final cookieStr = cookieResult.toString().replaceAll('"', '');
+      if (cookieStr != '__empty__' &&
+          cookieStr.isNotEmpty &&
+          cookieStr != 'null') {
+        // وُجدت كوكيز — يعني الـ challenge انتهى
+        if (_pageLoadCount > 1) {
+          await _finalizeSolve(cookies: cookieStr);
+          return;
+        }
+      }
+
+      // فحص: هل الصفحة الحالية هي صفحة المحتوى الأصلي؟
+      if (!isChallengePage && currentUrl.contains(_baseDomain)) {
+        await _finalizeSolve();
+      }
+    } catch (e) {
+      debugPrint('CF check error: $e');
     }
   }
 
-  void _cancel() {
+  Future<void> _finalizeSolve({String? cookies}) async {
     if (_solved) return;
-    widget.appState.onCloudflareDismissed();
-    Navigator.of(context).pop(false);
+    _solved = true;
+
+    try {
+      if (cookies != null && cookies.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('cf_cookies', cookies);
+        await prefs.setString('cf_domain', _baseDomain);
+        await prefs.setInt(
+          'cf_timestamp',
+          DateTime.now().millisecondsSinceEpoch,
+        );
+      }
+
+      if (mounted) {
+        widget.appState.dismissCloudflare();
+        await Future.delayed(const Duration(milliseconds: 200));
+        if (mounted) {
+          Navigator.of(context).pop(true);
+          widget.appState.triggerReload();
+        }
+      }
+    } catch (e) {
+      debugPrint('CF finalize error: $e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (_) => _cancel(),
+      onPopInvoked: (didPop) {
+        if (!_solved) {
+          widget.appState.dismissCloudflare();
+        }
+      },
       child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.88,
+        height: MediaQuery.of(context).size.height * 0.85,
         child: Column(
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFF1C1C1E),
-                border: Border(
-                    bottom:
-                        BorderSide(color: Colors.white.withOpacity(0.08))),
+                color: Theme.of(context).scaffoldBackgroundColor,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
-              child: Column(
+              child: Row(
                 children: [
-                  Container(
-                    width: 36,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(2),
+                  const Expanded(
+                    child: Text(
+                      'حل تحدي الأمان',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: _cancel,
-                        style: TextButton.styleFrom(
-                          foregroundColor: const Color(0xFFCC8C14),
-                          padding: EdgeInsets.zero,
-                        ),
-                        child: const Text('إغلاق',
-                            style: TextStyle(fontSize: 15)),
-                      ),
-                      const Spacer(),
-                      if (_isLoading)
-                        const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Color(0xFFCC8C14)),
-                        )
-                      else
-                        const Icon(Icons.shield_outlined,
-                            color: Color(0xFFCC8C14), size: 18),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'تحقق من الأمان',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: _solved ? null : _succeed,
-                        style: TextButton.styleFrom(
-                          foregroundColor: const Color(0xFFCC8C14),
-                          padding: EdgeInsets.zero,
-                        ),
-                        child: const Text('تم',
-                            style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'أكمل التحقق أدناه للمتابعة',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withOpacity(0.4)),
+                  if (_isLoading)
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    const Icon(Icons.security, size: 20),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () {
+                      widget.appState.dismissCloudflare();
+                      Navigator.of(context).pop(false);
+                    },
+                    child: const Text('إغلاق'),
                   ),
                 ],
               ),
@@ -192,16 +221,27 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                 children: [
                   WebViewWidget(controller: _controller),
                   if (_isLoading)
-                    Container(
-                      color: const Color(0xFF0F0F0F).withOpacity(0.6),
-                      child: const Center(
-                        child: CircularProgressIndicator(
-                            color: Color(0xFFCC8C14)),
-                      ),
-                    ),
+                    const Center(child: CircularProgressIndicator()),
                 ],
               ),
             ),
+            if (!_solved)
+              Container(
+                padding: const EdgeInsets.all(12),
+                color: Colors.amber.withOpacity(0.1),
+                child: const Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: Colors.amber),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'اضغط على مربع "أنا لست روبوت" وانتظر حتى يكتمل',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),

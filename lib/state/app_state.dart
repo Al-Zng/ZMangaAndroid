@@ -10,14 +10,9 @@ class AppState extends ChangeNotifier {
   List<Manga> _library = [];
   List<Manga> _wantToRead = [];
   List<Manga> _completed = [];
-
-  // ─── Cloudflare ───────────────────────────────────────────────────
   bool _showCloudflareSheet = false;
   String? _cloudflareURL;
-  String? _cfCookies; // كوكيز Cloudflare المحفوظة من الـ sheet
   int _reloadTrigger = 0;
-
-  // ─── Cache ────────────────────────────────────────────────────────
   List<Manga>? _cachedLatest;
   List<Manga>? _cachedPopular;
   Map<String, Manga> _mangaCache = {};
@@ -28,7 +23,6 @@ class AppState extends ChangeNotifier {
   List<Manga> get completed => _completed;
   bool get showCloudflareSheet => _showCloudflareSheet;
   String? get cloudflareURL => _cloudflareURL;
-  String? get cfCookies => _cfCookies;
   int get reloadTrigger => _reloadTrigger;
   List<Manga>? get cachedLatest => _cachedLatest;
   List<Manga>? get cachedPopular => _cachedPopular;
@@ -48,7 +42,7 @@ class AppState extends ChangeNotifier {
     await _loadMangaCache();
   }
 
-  // ─── History ──────────────────────────────────────────────────────
+  // ---- History ----
   void saveProgress(ReadingProgress progress) {
     _history.removeWhere((p) => p.mangaSlug == progress.mangaSlug);
     _history.insert(0, progress);
@@ -79,7 +73,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Library ──────────────────────────────────────────────────────
+  // ---- Favorites (Library) ----
   void addToLibrary(Manga manga) {
     if (_library.any((m) => m.slug == manga.slug)) return;
     _library.insert(0, manga);
@@ -111,7 +105,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Want to Read ─────────────────────────────────────────────────
+  // ---- Want to Read ----
   void addWantToRead(Manga manga) {
     if (_wantToRead.any((m) => m.slug == manga.slug)) return;
     _wantToRead.insert(0, manga);
@@ -144,7 +138,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Completed ────────────────────────────────────────────────────
+  // ---- Completed ----
   void addCompleted(Manga manga) {
     if (_completed.any((m) => m.slug == manga.slug)) return;
     _completed.insert(0, manga);
@@ -176,7 +170,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Home Caching ─────────────────────────────────────────────────
+  // ---- Home Caching ----
   void saveCachedLatest(List<Manga> items) {
     _cachedLatest = items;
     _persistCached('zmanga_cached_latest', items);
@@ -207,7 +201,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Manga Cache ──────────────────────────────────────────────────
+  // ---- Manga Detail Cache ----
   void cacheManga(Manga manga) {
     _mangaCache[manga.slug] = manga;
     _persistMangaCache();
@@ -229,35 +223,23 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Cloudflare — نفس منطق iOS تماماً ────────────────────────────
-
-  /// يُطلق من MangaService عند اكتشاف Cloudflare
-  /// يرمي exception مثل iOS — لا ينتظر
+  // ---- Cloudflare ----
   void triggerCloudflare(String url) {
-    if (_showCloudflareSheet) return; // لا تفتح sheet ثانية
     _cloudflareURL = url;
     _showCloudflareSheet = true;
     notifyListeners();
   }
 
-  /// يُستدعى من CloudflareBypassSheet عند النجاح — مثل iOS
-  void onCloudflareSolved({String? cookies}) {
+  void dismissCloudflare() {
     _showCloudflareSheet = false;
-    if (cookies != null && cookies.isNotEmpty) _cfCookies = cookies;
-    notifyListeners();
-    _reloadTrigger++;
+    // نبقي _cloudflareURL لأن الـ sheet قد يحتاجه بعد الإغلاق
     notifyListeners();
   }
 
-  /// يُستدعى عند الإغلاق بالإجبار
-  void onCloudflareDismissed() {
-    _showCloudflareSheet = false;
+  void clearCloudflareURL() {
+    _cloudflareURL = null;
     notifyListeners();
-    // لا نُطلق reload — المستخدم أغلق بالإجبار
   }
-
-  // للتوافق
-  void dismissCloudflare() => onCloudflareDismissed();
 
   void triggerReload() {
     _reloadTrigger++;
