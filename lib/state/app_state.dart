@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:async';
 import 'dart:convert';
 import '../models/models.dart';
 
@@ -12,15 +11,13 @@ class AppState extends ChangeNotifier {
   List<Manga> _wantToRead = [];
   List<Manga> _completed = [];
 
-  // ─── Cloudflare state ───────────────────────────────────────────
+  // ─── Cloudflare ───────────────────────────────────────────────────
   bool _showCloudflareSheet = false;
   String? _cloudflareURL;
+  // عداد يتغير فقط عند حل Cloudflare — الـ screens تستمع لهذا
   int _reloadTrigger = 0;
 
-  // Completers waiting for CF to be solved
-  final List<Completer<bool>> _cfWaiters = [];
-
-  // ─── Cache ───────────────────────────────────────────────────────
+  // ─── Cache ────────────────────────────────────────────────────────
   List<Manga>? _cachedLatest;
   List<Manga>? _cachedPopular;
   Map<String, Manga> _mangaCache = {};
@@ -50,7 +47,7 @@ class AppState extends ChangeNotifier {
     await _loadMangaCache();
   }
 
-  // ─── History ─────────────────────────────────────────────────────
+  // ─── History ──────────────────────────────────────────────────────
   void saveProgress(ReadingProgress progress) {
     _history.removeWhere((p) => p.mangaSlug == progress.mangaSlug);
     _history.insert(0, progress);
@@ -81,7 +78,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Library ─────────────────────────────────────────────────────
+  // ─── Library ──────────────────────────────────────────────────────
   void addToLibrary(Manga manga) {
     if (_library.any((m) => m.slug == manga.slug)) return;
     _library.insert(0, manga);
@@ -146,7 +143,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Completed ───────────────────────────────────────────────────
+  // ─── Completed ────────────────────────────────────────────────────
   void addCompleted(Manga manga) {
     if (_completed.any((m) => m.slug == manga.slug)) return;
     _completed.insert(0, manga);
@@ -178,7 +175,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Home Caching ────────────────────────────────────────────────
+  // ─── Home Caching ─────────────────────────────────────────────────
   void saveCachedLatest(List<Manga> items) {
     _cachedLatest = items;
     _persistCached('zmanga_cached_latest', items);
@@ -209,7 +206,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Manga Detail Cache ──────────────────────────────────────────
+  // ─── Manga Cache ──────────────────────────────────────────────────
   void cacheManga(Manga manga) {
     _mangaCache[manga.slug] = manga;
     _persistMangaCache();
@@ -231,57 +228,34 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Cloudflare ──────────────────────────────────────────────────
+  // ─── Cloudflare — نفس منطق iOS تماماً ────────────────────────────
 
   /// يُطلق من MangaService عند اكتشاف Cloudflare
-  /// يعيد Future<bool> — true إذا حُل، false إذا أُغلق بالإجبار
-  Future<bool> triggerCloudflare(String url) {
-    // إذا كان الـ sheet مفتوحاً بالفعل لنفس الـ URL، انتظر الـ completer الموجود
-    if (_showCloudflareSheet) {
-      final c = Completer<bool>();
-      _cfWaiters.add(c);
-      return c.future;
-    }
-
+  /// يرمي exception مثل iOS — لا ينتظر
+  void triggerCloudflare(String url) {
+    if (_showCloudflareSheet) return; // لا تفتح sheet ثانية
     _cloudflareURL = url;
     _showCloudflareSheet = true;
     notifyListeners();
-
-    final c = Completer<bool>();
-    _cfWaiters.add(c);
-    return c.future;
   }
 
-  /// يُستدعى من CloudflareBypassSheet عند النجاح
+  /// يُستدعى من CloudflareBypassSheet عند النجاح — مثل iOS
   void onCloudflareSolved() {
     _showCloudflareSheet = false;
-    // لا تُصفّر _cloudflareURL حتى يستطيع MangaService إعادة الطلب
     notifyListeners();
-
-    // أبلغ كل المنتظرين بالنجاح
-    for (final c in _cfWaiters) {
-      if (!c.isCompleted) c.complete(true);
-    }
-    _cfWaiters.clear();
-
-    // أطلق reload للـ screens
+    // أطلق reload لكل الـ screens المستمعة — مثل iOS onChange(of: reloadTrigger)
     _reloadTrigger++;
     notifyListeners();
   }
 
-  /// يُستدعى عند الإغلاق بالإجبار (بدون حل)
+  /// يُستدعى عند الإغلاق بالإجبار
   void onCloudflareDismissed() {
     _showCloudflareSheet = false;
     notifyListeners();
-
-    // أبلغ المنتظرين بالفشل
-    for (final c in _cfWaiters) {
-      if (!c.isCompleted) c.complete(false);
-    }
-    _cfWaiters.clear();
+    // لا نُطلق reload — المستخدم أغلق بالإجبار
   }
 
-  // للتوافق مع الكود القديم
+  // للتوافق
   void dismissCloudflare() => onCloudflareDismissed();
 
   void triggerReload() {
