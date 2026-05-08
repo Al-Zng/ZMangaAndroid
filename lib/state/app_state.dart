@@ -13,6 +13,7 @@ class AppState extends ChangeNotifier {
   bool _showCloudflareSheet = false;
   String? _cloudflareURL;
   int _reloadTrigger = 0;
+  DateTime? _lastCloudflareTrigger;
   List<Manga>? _cachedLatest;
   List<Manga>? _cachedPopular;
   Map<String, Manga> _mangaCache = {};
@@ -225,6 +226,15 @@ class AppState extends ChangeNotifier {
 
   // ---- Cloudflare ----
   void triggerCloudflare(String url) {
+    final now = DateTime.now();
+    // منع التكرار إذا كانت النافذة مفتوحة أو إذا تم استدعاؤها قبل أقل من 5 ثوانٍ
+    if (_showCloudflareSheet || 
+        (_lastCloudflareTrigger != null && 
+         now.difference(_lastCloudflareTrigger!) < const Duration(seconds: 5))) {
+      return;
+    }
+    
+    _lastCloudflareTrigger = now;
     _cloudflareURL = url;
     _showCloudflareSheet = true;
     notifyListeners();
@@ -232,7 +242,6 @@ class AppState extends ChangeNotifier {
 
   void dismissCloudflare() {
     _showCloudflareSheet = false;
-    // نبقي _cloudflareURL لأن الـ sheet قد يحتاجه بعد الإغلاق
     notifyListeners();
   }
 

@@ -149,10 +149,16 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
       }
 
       if (mounted) {
+        // نغلق الحالة أولاً لمنع التكرار
         widget.appState.dismissCloudflare();
-        await Future.delayed(const Duration(milliseconds: 200));
+        
+        // ننتظر قليلاً للتأكد من تحديث الواجهة
+        await Future.delayed(const Duration(milliseconds: 100));
+        
         if (mounted) {
+          // نغلق النافذة المنبثقة
           Navigator.of(context).pop(true);
+          // نطلب إعادة تحميل البيانات
           widget.appState.triggerReload();
         }
       }
@@ -208,6 +214,7 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                   const SizedBox(width: 8),
                   TextButton(
                     onPressed: () {
+                      // إغلاق الحالة يدوياً قبل الخروج
                       widget.appState.dismissCloudflare();
                       Navigator.of(context).pop(false);
                     },

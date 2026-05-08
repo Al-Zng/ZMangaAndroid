@@ -33,10 +33,6 @@ class _MainShellState extends State<MainShell> {
     if (_isShowingCloudflare) return;
     _isShowingCloudflare = true;
 
-    // أغلق الـ flag فورًا في AppState لمنع إعادة الفتح
-    // (الـ sheet سيتولى إدارة نفسه)
-    appState.dismissCloudflare();
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -46,7 +42,10 @@ class _MainShellState extends State<MainShell> {
         url: appState.cloudflareURL!,
         appState: appState,
       ),
-    ).whenComplete(() {
+    ).then((_) {
+      // عند إغلاق النافذة، نحدث الحالة في AppState
+      appState.dismissCloudflare();
+    }).whenComplete(() {
       _isShowingCloudflare = false;
     });
   }

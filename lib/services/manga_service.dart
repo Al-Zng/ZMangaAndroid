@@ -55,20 +55,17 @@ class MangaService {
         responseBody.contains('Checking your browser') ||
         responseBody.contains('Attention Required')) {
       // Cloudflare detected -> trigger popup
-      // التعديل هنا: التأكد أن النافذة ليست مفتوحة بالفعل
-      if (AppState.current?.showCloudflareSheet == false) {
-        AppState.current?.triggerCloudflare(urlString);
+      if (AppState.current != null && !AppState.current!.showCloudflareSheet) {
+        AppState.current!.triggerCloudflare(urlString);
       }
       return '';
     }
-    
     if (response.statusCode == 200) {
       return responseBody;
     } else {
       throw Exception('Failed to load: ${response.statusCode}');
     }
   }
-
 
   // MARK: - fetchHTMLViaWebView (مثل iOS تماماً)
   Future<String> _fetchHTMLViaWebView(String urlString) async {
