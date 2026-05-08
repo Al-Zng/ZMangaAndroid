@@ -1,240 +1,291 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'dart:convert';
-import 'models/manga.dart';
+import '../models/models.dart';
 
 class AppState extends ChangeNotifier {
-  final SharedPreferences _prefs;
+  static AppState? current;
+
+  List<ReadingProgress> _history = [];
   List<Manga> _library = [];
-  List<Manga> _recentManga = [];
-  List<Map<String, dynamic>> _downloads = [];
-  bool _isDarkMode = true;
-  String _baseUrl = 'https://zmanga.org';
-  bool _cookiesReady = false;
-  String? _userAgent;
-  Map<String, String> _cloudflareCookies = {};
-  List<Manga> _searchResults = [];
-  bool _isLoading = false;
-  int _currentPage = 1;
-  String _currentGenre = '';
-  String _currentSearch = '';
+  List<Manga> _wantToRead = [];
+  List<Manga> _completed = [];
 
-  AppState(this._prefs) {
-    _loadPreferences();
-  }
+  // ─── Cloudflare state ───────────────────────────────────────────
+  bool _showCloudflareSheet = false;
+  String? _cloudflareURL;
+  int _reloadTrigger = 0;
 
-  // Getters
+  // Completers waiting for CF to be solved
+  final List<Completer<bool>> _cfWaiters = [];
+
+  // ─── Cache ───────────────────────────────────────────────────────
+  List<Manga>? _cachedLatest;
+  List<Manga>? _cachedPopular;
+  Map<String, Manga> _mangaCache = {};
+
+  List<ReadingProgress> get history => _history;
   List<Manga> get library => _library;
-  List<Manga> get recentManga => _recentManga;
-  List<Map<String, dynamic>> get downloads => _downloads;
-  bool get isDarkMode => _isDarkMode;
-  String get baseUrl => _baseUrl;
-  bool get cookiesReady => _cookiesReady;
-  String? get userAgent => _userAgent;
-  Map<String, String> get cloudflareCookies => _cloudflareCookies;
-  List<Manga> get searchResults => _searchResults;
-  bool get isLoading => _isLoading;
-  int get currentPage => _currentPage;
-  String get currentGenre => _currentGenre;
-  String get currentSearch => _currentSearch;
+  List<Manga> get wantToRead => _wantToRead;
+  List<Manga> get completed => _completed;
+  bool get showCloudflareSheet => _showCloudflareSheet;
+  String? get cloudflareURL => _cloudflareURL;
+  int get reloadTrigger => _reloadTrigger;
+  List<Manga>? get cachedLatest => _cachedLatest;
+  List<Manga>? get cachedPopular => _cachedPopular;
+  Map<String, Manga> get mangaCache => _mangaCache;
 
-  static AppState? current(BuildContext context) {
-    try {
-      return context.read<AppState>();
-    } catch (e) {
-      return null;
+  AppState() {
+    current = this;
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _loadHistory();
+    await _loadLibrary();
+    await _loadWantToRead();
+    await _loadCompleted();
+    await _loadCached();
+    await _loadMangaCache();
+  }
+
+  // ─── History ─────────────────────────────────────────────────────
+  void saveProgress(ReadingProgress progress) {
+    _history.removeWhere((p) => p.mangaSlug == progress.mangaSlug);
+    _history.insert(0, progress);
+    if (_history.length > 200) _history = _history.sublist(0, 200);
+    _persistHistory();
+    notifyListeners();
+  }
+
+  void clearHistory() {
+    _history.clear();
+    _persistHistory();
+    notifyListeners();
+  }
+
+  Future<void> _persistHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        'zmanga_history', jsonEncode(_history.map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> _loadHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString('zmanga_history');
+    if (data != null) {
+      final list = jsonDecode(data) as List;
+      _history = list.map((e) => ReadingProgress.fromJson(e)).toList();
+      notifyListeners();
     }
   }
 
-  // Initialize preferences
-  void _loadPreferences() {
-    final libraryJson = _prefs.getString('library');
-    if (libraryJson != null) {
-      final List<dynamic> decoded = jsonDecode(libraryJson);
-      _library = decoded.map((item) => Manga.fromJson(item)).toList();
-    }
-
-    final recentJson = _prefs.getString('recentManga');
-    if (recentJson != null) {
-      final List<dynamic> decoded = jsonDecode(recentJson);
-      _recentManga = decoded.map((item) => Manga.fromJson(item)).toList();
-    }
-
-    final downloadsJson = _prefs.getString('downloads');
-    if (downloadsJson != null) {
-      final List<dynamic> decoded = jsonDecode(downloadsJson);
-      _downloads = decoded.map((item) => Map<String, dynamic>.from(item)).toList();
-    }
-
-    _isDarkMode = _prefs.getBool('isDarkMode') ?? true;
-    _baseUrl = _prefs.getString('baseUrl') ?? 'https://zmanga.org';
-    _cookiesReady = _prefs.getBool('cookiesReady') ?? false;
-    _userAgent = _prefs.getString('userAgent');
-    
-    final cookiesJson = _prefs.getString('cloudflareCookies');
-    if (cookiesJson != null) {
-      final Map<String, dynamic> decoded = jsonDecode(cookiesJson);
-      _cloudflareCookies = decoded.map((key, value) => MapEntry(key, value.toString()));
-    }
-
-    notifyListeners();
-  }
-
-  // Cloudflare bypass methods
-  void triggerCloudflare(String url) {
-    _cookiesReady = false;
-    _prefs.setBool('cookiesReady', false);
-    notifyListeners();
-  }
-
-  void setCookiesReady(bool ready) {
-    _cookiesReady = ready;
-    _prefs.setBool('cookiesReady', ready);
-    notifyListeners();
-  }
-
-  void setCloudflareCookies(Map<String, String> cookies) {
-    _cloudflareCookies = cookies;
-    _prefs.setString('cloudflareCookies', jsonEncode(cookies));
-    notifyListeners();
-  }
-
-  void setUserAgent(String userAgent) {
-    _userAgent = userAgent;
-    _prefs.setString('userAgent', userAgent);
-    notifyListeners();
-  }
-
-  // Search methods
-  void setSearchResults(List<Manga> results) {
-    _searchResults = results;
-    notifyListeners();
-  }
-
-  void appendSearchResults(List<Manga> results) {
-    _searchResults.addAll(results);
-    notifyListeners();
-  }
-
-  void clearSearchResults() {
-    _searchResults = [];
-    _currentPage = 1;
-    _currentGenre = '';
-    _currentSearch = '';
-    notifyListeners();
-  }
-
-  void setLoading(bool loading) {
-    _isLoading = loading;
-    notifyListeners();
-  }
-
-  void setCurrentPage(int page) {
-    _currentPage = page;
-    notifyListeners();
-  }
-
-  void setCurrentGenre(String genre) {
-    _currentGenre = genre;
-    _currentPage = 1;
-    notifyListeners();
-  }
-
-  void setCurrentSearch(String search) {
-    _currentSearch = search;
-    _currentPage = 1;
-    notifyListeners();
-  }
-
-  // Library management
+  // ─── Library ─────────────────────────────────────────────────────
   void addToLibrary(Manga manga) {
-    if (!_library.any((m) => m.url == manga.url)) {
-      _library.insert(0, manga);
-      _saveLibrary();
+    if (_library.any((m) => m.slug == manga.slug)) return;
+    _library.insert(0, manga);
+    _persistLibrary();
+    notifyListeners();
+  }
+
+  void removeFromLibrary(Manga manga) {
+    _library.removeWhere((m) => m.slug == manga.slug);
+    _persistLibrary();
+    notifyListeners();
+  }
+
+  bool isInLibrary(Manga manga) => _library.any((m) => m.slug == manga.slug);
+
+  Future<void> _persistLibrary() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        'zmanga_library', jsonEncode(_library.map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> _loadLibrary() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString('zmanga_library');
+    if (data != null) {
+      final list = jsonDecode(data) as List;
+      _library = list.map((e) => Manga.fromJson(e)).toList();
+      notifyListeners();
     }
   }
 
-  void removeFromLibrary(String mangaUrl) {
-    _library.removeWhere((manga) => manga.url == mangaUrl);
-    _saveLibrary();
-  }
-
-  bool isInLibrary(String mangaUrl) {
-    return _library.any((manga) => manga.url == mangaUrl);
-  }
-
-  void _saveLibrary() {
-    final jsonData = _library.map((manga) => manga.toJson()).toList();
-    _prefs.setString('library', jsonEncode(jsonData));
+  // ─── Want to Read ─────────────────────────────────────────────────
+  void addWantToRead(Manga manga) {
+    if (_wantToRead.any((m) => m.slug == manga.slug)) return;
+    _wantToRead.insert(0, manga);
+    _persistWantToRead();
     notifyListeners();
   }
 
-  // Recent manga
-  void addToRecent(Manga manga) {
-    _recentManga.removeWhere((m) => m.url == manga.url);
-    _recentManga.insert(0, manga);
-    if (_recentManga.length > 50) {
-      _recentManga = _recentManga.sublist(0, 50);
+  void removeWantToRead(Manga manga) {
+    _wantToRead.removeWhere((m) => m.slug == manga.slug);
+    _persistWantToRead();
+    notifyListeners();
+  }
+
+  bool isWantToRead(Manga manga) =>
+      _wantToRead.any((m) => m.slug == manga.slug);
+
+  Future<void> _persistWantToRead() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('zmanga_wanttoread',
+        jsonEncode(_wantToRead.map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> _loadWantToRead() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString('zmanga_wanttoread');
+    if (data != null) {
+      final list = jsonDecode(data) as List;
+      _wantToRead = list.map((e) => Manga.fromJson(e)).toList();
+      notifyListeners();
     }
-    _saveRecentManga();
   }
 
-  void _saveRecentManga() {
-    final jsonData = _recentManga.map((manga) => manga.toJson()).toList();
-    _prefs.setString('recentManga', jsonEncode(jsonData));
+  // ─── Completed ───────────────────────────────────────────────────
+  void addCompleted(Manga manga) {
+    if (_completed.any((m) => m.slug == manga.slug)) return;
+    _completed.insert(0, manga);
+    _persistCompleted();
     notifyListeners();
   }
 
-  // Downloads management
-  void addDownload(Map<String, dynamic> downloadInfo) {
-    _downloads.insert(0, downloadInfo);
-    _saveDownloads();
-  }
-
-  void removeDownload(String chapterUrl) {
-    _downloads.removeWhere((d) => d['chapterUrl'] == chapterUrl);
-    _saveDownloads();
-  }
-
-  bool isDownloaded(String chapterUrl) {
-    return _downloads.any((d) => d['chapterUrl'] == chapterUrl);
-  }
-
-  void _saveDownloads() {
-    _prefs.setString('downloads', jsonEncode(_downloads));
+  void removeCompleted(Manga manga) {
+    _completed.removeWhere((m) => m.slug == manga.slug);
+    _persistCompleted();
     notifyListeners();
   }
 
-  // Settings
-  void toggleDarkMode() {
-    _isDarkMode = !_isDarkMode;
-    _prefs.setBool('isDarkMode', _isDarkMode);
+  bool isCompleted(Manga manga) => _completed.any((m) => m.slug == manga.slug);
+
+  Future<void> _persistCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('zmanga_completed',
+        jsonEncode(_completed.map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> _loadCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString('zmanga_completed');
+    if (data != null) {
+      final list = jsonDecode(data) as List;
+      _completed = list.map((e) => Manga.fromJson(e)).toList();
+      notifyListeners();
+    }
+  }
+
+  // ─── Home Caching ────────────────────────────────────────────────
+  void saveCachedLatest(List<Manga> items) {
+    _cachedLatest = items;
+    _persistCached('zmanga_cached_latest', items);
+  }
+
+  void saveCachedPopular(List<Manga> items) {
+    _cachedPopular = items;
+    _persistCached('zmanga_cached_popular', items);
+  }
+
+  Future<void> _persistCached(String key, List<Manga> items) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        key, jsonEncode(items.map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> _loadCached() async {
+    final prefs = await SharedPreferences.getInstance();
+    final latest = prefs.getString('zmanga_cached_latest');
+    if (latest != null) {
+      _cachedLatest =
+          (jsonDecode(latest) as List).map((e) => Manga.fromJson(e)).toList();
+    }
+    final popular = prefs.getString('zmanga_cached_popular');
+    if (popular != null) {
+      _cachedPopular =
+          (jsonDecode(popular) as List).map((e) => Manga.fromJson(e)).toList();
+    }
+  }
+
+  // ─── Manga Detail Cache ──────────────────────────────────────────
+  void cacheManga(Manga manga) {
+    _mangaCache[manga.slug] = manga;
+    _persistMangaCache();
+  }
+
+  Future<void> _persistMangaCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('zmanga_manga_cache',
+        jsonEncode(_mangaCache.map((k, v) => MapEntry(k, v.toJson()))));
+  }
+
+  Future<void> _loadMangaCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = prefs.getString('zmanga_manga_cache');
+    if (data != null) {
+      final map = jsonDecode(data) as Map<String, dynamic>;
+      _mangaCache = map.map((k, v) => MapEntry(k, Manga.fromJson(v)));
+      notifyListeners();
+    }
+  }
+
+  // ─── Cloudflare ──────────────────────────────────────────────────
+
+  /// يُطلق من MangaService عند اكتشاف Cloudflare
+  /// يعيد Future<bool> — true إذا حُل، false إذا أُغلق بالإجبار
+  Future<bool> triggerCloudflare(String url) {
+    // إذا كان الـ sheet مفتوحاً بالفعل لنفس الـ URL، انتظر الـ completer الموجود
+    if (_showCloudflareSheet) {
+      final c = Completer<bool>();
+      _cfWaiters.add(c);
+      return c.future;
+    }
+
+    _cloudflareURL = url;
+    _showCloudflareSheet = true;
+    notifyListeners();
+
+    final c = Completer<bool>();
+    _cfWaiters.add(c);
+    return c.future;
+  }
+
+  /// يُستدعى من CloudflareBypassSheet عند النجاح
+  void onCloudflareSolved() {
+    _showCloudflareSheet = false;
+    // لا تُصفّر _cloudflareURL حتى يستطيع MangaService إعادة الطلب
+    notifyListeners();
+
+    // أبلغ كل المنتظرين بالنجاح
+    for (final c in _cfWaiters) {
+      if (!c.isCompleted) c.complete(true);
+    }
+    _cfWaiters.clear();
+
+    // أطلق reload للـ screens
+    _reloadTrigger++;
     notifyListeners();
   }
 
-  void setBaseUrl(String url) {
-    _baseUrl = url;
-    _prefs.setString('baseUrl', url);
+  /// يُستدعى عند الإغلاق بالإجبار (بدون حل)
+  void onCloudflareDismissed() {
+    _showCloudflareSheet = false;
     notifyListeners();
+
+    // أبلغ المنتظرين بالفشل
+    for (final c in _cfWaiters) {
+      if (!c.isCompleted) c.complete(false);
+    }
+    _cfWaiters.clear();
   }
 
-  void clearCache() {
-    _prefs.remove('cloudflareCookies');
-    _prefs.remove('recentManga');
-    _prefs.remove('downloads');
-    _cloudflareCookies = {};
-    _recentManga = [];
-    _downloads = [];
-    _cookiesReady = false;
-    _userAgent = null;
-    _prefs.setBool('cookiesReady', false);
-    _prefs.remove('userAgent');
-    notifyListeners();
-  }
+  // للتوافق مع الكود القديم
+  void dismissCloudflare() => onCloudflareDismissed();
 
-  void clearLibrary() {
-    _library = [];
-    _prefs.remove('library');
+  void triggerReload() {
+    _reloadTrigger++;
     notifyListeners();
   }
 }
