@@ -12,21 +12,19 @@ class NetworkMonitor extends ChangeNotifier {
   bool _isConnected = true;
   bool get isConnected => _isConnected;
 
-  StreamSubscription<List<ConnectivityResult>>? _subscription;
+  StreamSubscription<ConnectivityResult>? _subscription;
 
   void _init() {
-    // connectivity_plus v5 يعيد List<ConnectivityResult>
-    _subscription = _connectivity.onConnectivityChanged.listen((results) {
-      final connected = results.any((r) => r != ConnectivityResult.none);
+    _subscription = _connectivity.onConnectivityChanged.listen((result) {
+      final connected = result != ConnectivityResult.none;
       if (connected != _isConnected) {
         _isConnected = connected;
         notifyListeners();
       }
     });
 
-    // قراءة الحالة الابتدائية
-    _connectivity.checkConnectivity().then((results) {
-      _isConnected = results.any((r) => r != ConnectivityResult.none);
+    _connectivity.checkConnectivity().then((result) {
+      _isConnected = result != ConnectivityResult.none;
       notifyListeners();
     });
   }

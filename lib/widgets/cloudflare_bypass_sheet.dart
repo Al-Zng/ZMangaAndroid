@@ -36,7 +36,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
   @override
   void initState() {
     super.initState();
-    // استخدم iOS Safari UA — نفس ما يستخدمه HttpService
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent(AppUserAgent.iosSafari)
@@ -57,7 +56,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
     if (_solved) return;
     _pageLoadCount++;
 
-    // انتظر استقرار الصفحة بعد حل Cloudflare
     await Future.delayed(const Duration(milliseconds: 1500));
     if (!mounted || _solved) return;
 
@@ -85,78 +83,42 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
           title.contains('one moment');
 
       if (!isStillChallenge && _pageLoadCount > 1) {
-        // جرب قراءة الكوكيز من JS (قد لا تشمل HttpOnly)
-        final cookieResult = await _controller.runJavaScriptReturningResult(
-          r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
-        );
-        final jsCookies =
-            cookieResult.toString().replaceAll('"', '').trim();
-
-        // استخدم WebViewCookieManager لجلب الكوكيز الحقيقية (بما فيها cf_clearance)
-        await _extractAndSaveCookies(jsCookies);
+        await _extractCookiesAndFinalize();
         return;
       }
 
-      // إذا تغيّر URL بعيداً عن صفحة التحدي
       if (_pageLoadCount > 1 &&
           currentUrl.contains(_baseDomain) &&
           !isStillChallenge) {
-        final cookieResult = await _controller.runJavaScriptReturningResult(
-          r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
-        );
-        final jsCookies =
-            cookieResult.toString().replaceAll('"', '').trim();
-        await _extractAndSaveCookies(jsCookies);
+        await _extractCookiesAndFinalize();
       }
     } catch (e) {
       debugPrint('CF check error: $e');
     }
   }
 
-  Future<void> _extractAndSaveCookies(String jsCookies) async {
+  Future<void> _extractCookiesAndFinalize() async {
     if (_solved) return;
 
     try {
-      // استخدم WebViewCookieManager لجلب cf_clearance (HttpOnly)
-      final cookieManager = WebViewCookieManager();
-      final cfCookie = await cookieManager.getCookies(widget.url);
+      // webview_flutter 4.x لا يدعم getCookies — نستخدم JS
+      // cf_clearance تكون HttpOnly لكن WebView يشاركها مع Dio تلقائياً
+      // عبر shared cookie store على Android (WebView + OkHttp)
+      final cookieResult = await _controller.runJavaScriptReturningResult(
+        r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
+      );
+      final jsCookies =
+          cookieResult.toString().replaceAll('"', '').trim();
 
-      // ابنِ header الكوكيز من WebViewCookieManager
-      final cookieParts = <String>[];
-      for (final cookie in cfCookie) {
-        cookieParts.add('${cookie.name}=${cookie.value}');
-      }
+      // احفظ ما نستطيع قراءته (PHPSESSID, wordpress_logged_in, etc.)
+      // cf_clearance يُشارك تلقائياً بين WebView و HttpClient على Android
+      final cookiesToSave =
+          (jsCookies.isNotEmpty && jsCookies != 'null') ? jsCookies : '';
 
-      // أضف كوكيز JS إذا وُجدت
-      if (jsCookies.isNotEmpty && jsCookies != 'null') {
-        for (final part in jsCookies.split(';')) {
-          final trimmed = part.trim();
-          if (trimmed.isNotEmpty &&
-              !cookieParts
-                  .any((c) => c.startsWith(trimmed.split('=')[0]))) {
-            cookieParts.add(trimmed);
-          }
-        }
-      }
-
-      if (cookieParts.isEmpty && jsCookies.isEmpty) {
-        // لم نجد كوكيز بعد، انتظر أكثر
-        return;
-      }
-
-      final fullCookieHeader = cookieParts.join('; ');
-      final hasCfClearance =
-          fullCookieHeader.contains('cf_clearance') || jsCookies.isNotEmpty;
-
-      if (hasCfClearance || _pageLoadCount > 3) {
-        await _finalizeSolve(cookies: fullCookieHeader.isNotEmpty ? fullCookieHeader : jsCookies);
-      }
+      await _finalizeSolve(cookies: cookiesToSave);
     } catch (e) {
       debugPrint('Cookie extract error: $e');
-      // fallback: احفظ JS cookies على الأقل
-      if (jsCookies.isNotEmpty) {
-        await _finalizeSolve(cookies: jsCookies);
-      }
+      await _finalizeSolve(cookies: null);
     }
   }
 
@@ -193,7 +155,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
         height: MediaQuery.of(context).size.height * 0.85,
         child: Column(
           children: [
-            // ─── Header ───────────────────────────────────────────
             Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -230,8 +191,7 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                     const SizedBox(
                       width: 18,
                       height: 18,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   else
                     Icon(Icons.shield_outlined,
@@ -249,8 +209,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                 ],
               ),
             ),
-
-            // ─── WebView ──────────────────────────────────────────
             Expanded(
               child: Stack(
                 children: [
