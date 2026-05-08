@@ -1,70 +1,97 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
 import '../network/user_agent.dart';
 import 'cookie_service.dart';
 
-class VerificationScreen extends StatefulWidget {
-  final String url;
-  const VerificationScreen({super.key, required this.url});
+class WebViewVerification {
+  final CookieService _cookieService = CookieService();
 
-  @override
-  State<VerificationScreen> createState() => _VerificationScreenState();
-}
+  Future<bool> verifyCloudflare({
+    required BuildContext context,
+    required String url,
+  }) async {
+    final completer = Completer<bool>();
 
-class _VerificationScreenState extends State<VerificationScreen> {
-  late final WebViewController _controller;
-  bool _solved = false;
+    late final WebViewController controller;
 
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
+    controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent(AppUserAgent.iosSafari)
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (url) async {
-          await _checkVerification();
-        },
-      ))
-      ..loadRequest(Uri.parse(widget.url));
-  }
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (String currentUrl) async {
+            try {
+              final cookieManager = WebViewCookieManager();
 
-  Future<void> _checkVerification() async {
-    if (_solved) return;
+              final cookies = await cookieManager.getCookies(currentUrl);
 
-    final title = await _controller.getTitle();
-    final isChallenged = title == null ||
-        title.toLowerCase().contains('just a moment') ||
-        title.toLowerCase().contains('cloudflare');
+              if (cookies.isEmpty) return;
 
-    if (!isChallenged) {
-      final cookies = await _controller.runJavaScriptReturningResult(
-        'document.cookie'
-      ) as String;
-      
-      // Clean up the string result from runJavaScriptReturningResult
-      String cleanCookies = cookies.replaceAll('"', '');
-      
-      if (cleanCookies.contains('cf_clearance')) {
-        _solved = true;
-        await CookieService().saveCookies(cleanCookies);
-        if (mounted) Navigator.of(context).pop(true);
-      }
-    }
-  }
+              String? cfClearance;
+              String? phpSessionId;
+              String? wordpressLoggedIn;
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Security Verification'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(false),
+              final Map<String, String> cookieMap = {};
+
+              for (final cookie in cookies) {
+                cookieMap[cookie.name] = cookie.value;
+
+                if (cookie.name == 'cf_clearance') {
+                  cfClearance = cookie.value;
+                }
+
+                if (cookie.name == 'PHPSESSID') {
+                  phpSessionId = cookie.value;
+                }
+
+                if (cookie.name.contains('wordpress_logged_in')) {
+                  wordpressLoggedIn = cookie.value;
+                }
+              }
+
+              if (cfClearance != null && cfClearance.isNotEmpty) {
+                await _cookieService.saveCookies(
+                  cookies: cookieMap,
+                  cfClearance: cfClearance,
+                  phpSessionId: phpSessionId,
+                  wordpressLoggedIn: wordpressLoggedIn,
+                );
+
+                if (!completer.isCompleted) {
+                  completer.complete(true);
+                }
+
+                Navigator.of(context).pop();
+              }
+            } catch (e) {
+              debugPrint('Cookie extraction error: $e');
+            }
+          },
         ),
-      ),
-      body: WebViewWidget(controller: _controller),
+      )
+      ..loadRequest(Uri.parse(url));
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return Scaffold(
+          backgroundColor: Colors.black,
+          body: SafeArea(
+            child: WebViewWidget(
+              controller: controller,
+            ),
+          ),
+        );
+      },
+    );
+
+    return completer.future.timeout(
+      const Duration(seconds: 60),
+      onTimeout: () => false,
     );
   }
 }
