@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/models.dart';
 import '../services/manga_service.dart';
@@ -21,6 +23,7 @@ class _SearchScreenState extends State<SearchScreen> {
   bool hasMore = true;
   bool loadingMore = false;
   String? selectedGenre;
+  int _lastReloadTrigger = -1;
 
   static const genres = [
     'درامـا', 'رومانسى', 'فانتازا', 'أكشن', 'كوميدى',
@@ -28,9 +31,34 @@ class _SearchScreenState extends State<SearchScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _lastReloadTrigger = context.read<AppState>().reloadTrigger;
+        context.read<AppState>().addListener(_onAppStateChanged);
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    context.read<AppState>().removeListener(_onAppStateChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  // مثل iOS: .onChange(of: store.reloadTrigger) — يُعيد البحث بعد حل Cloudflare
+  void _onAppStateChanged() {
+    if (!mounted) return;
+    final appState = context.read<AppState>();
+    if (appState.reloadTrigger != _lastReloadTrigger) {
+      _lastReloadTrigger = appState.reloadTrigger;
+      if (results.isEmpty &&
+          (_controller.text.trim().isNotEmpty || selectedGenre != null)) {
+        _search(reset: true);
+      }
+    }
   }
 
   Future<void> _search({bool reset = true}) async {

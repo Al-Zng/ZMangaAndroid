@@ -10,6 +10,7 @@ import 'library_screen.dart';
 import 'downloads_screen.dart';
 import 'history_screen.dart';
 
+// مطابق لـ iOS ContentView
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -29,11 +30,10 @@ class _MainShellState extends State<MainShell> {
     HistoryScreen(),
   ];
 
-  void _showCloudflareBypass(BuildContext context, AppState appState) {
-    if (_isShowingCloudflare) return;
+  // مطابق لـ iOS: .sheet(item: $store.activeChallenge)
+  void _showCloudflareSheet(AppState appState) {
+    if (_isShowingCloudflare || appState.cloudflareURL == null) return;
     _isShowingCloudflare = true;
-
-    // احفظ الـ URL قبل الفتح (لا تستدع dismissCloudflare هنا)
     final cfUrl = appState.cloudflareURL!;
 
     showModalBottomSheet(
@@ -41,6 +41,10 @@ class _MainShellState extends State<MainShell> {
       isScrollControlled: true,
       isDismissible: false,
       enableDrag: false,
+      backgroundColor: const Color(0xFF1C1C1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
       builder: (_) => CloudflareBypassSheet(
         url: cfUrl,
         appState: appState,
@@ -55,12 +59,10 @@ class _MainShellState extends State<MainShell> {
     final net = context.watch<NetworkMonitor>();
     final appState = context.watch<AppState>();
 
-    // افتح الـ sheet فقط إذا طُلب ولم يُفتح بعد
+    // مثل iOS .sheet(item: $store.activeChallenge)
     if (appState.showCloudflareSheet && appState.cloudflareURL != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_isShowingCloudflare) {
-          _showCloudflareBypass(context, appState);
-        }
+        if (mounted) _showCloudflareSheet(appState);
       });
     }
 
@@ -82,14 +84,8 @@ class _MainShellState extends State<MainShell> {
                 children: [
                   Icon(Icons.wifi_off, color: Colors.white, size: 16),
                   SizedBox(width: 8),
-                  Text(
-                    'No Internet Connection',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                  Text('No Internet Connection',
+                      style: TextStyle(color: Colors.white, fontSize: 13)),
                 ],
               ),
             ),

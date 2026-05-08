@@ -40,6 +40,25 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
   void initState() {
     super.initState();
     _loadDetail();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<AppState>().addListener(_onAppStateChanged);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    context.read<AppState>().removeListener(_onAppStateChanged);
+    super.dispose();
+  }
+
+  // أعد التحميل بعد حل Cloudflare إذا كان فشل
+  void _onAppStateChanged() {
+    if (!mounted) return;
+    if (error != null && manga == null) {
+      _loadDetail();
+    }
   }
 
   Future<void> _loadDetail() async {
