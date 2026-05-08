@@ -255,7 +255,7 @@ class AppState extends ChangeNotifier {
   /// يُستدعى من CloudflareBypassSheet عند النجاح
   void onCloudflareSolved() {
     _showCloudflareSheet = false;
-    _cloudflareURL = null; // Clear URL on success
+    // لا تُصفّر _cloudflareURL حتى يستطيع MangaService إعادة الطلب
     notifyListeners();
 
     // أبلغ كل المنتظرين بالنجاح

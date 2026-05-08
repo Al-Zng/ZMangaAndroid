@@ -21,6 +21,7 @@ class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
   bool _isShowingCloudflare = false;
 
+  // IndexedStack يحافظ على حالة كل تاب — لا إعادة بناء
   final List<Widget> _tabs = const [
     HomeScreen(),
     SearchScreen(),
@@ -33,7 +34,6 @@ class _MainShellState extends State<MainShell> {
     if (_isShowingCloudflare) return;
     _isShowingCloudflare = true;
 
-    // احفظ الـ URL قبل الفتح (لا تستدع dismissCloudflare هنا)
     final cfUrl = appState.cloudflareURL!;
 
     showModalBottomSheet(
@@ -55,7 +55,6 @@ class _MainShellState extends State<MainShell> {
     final net = context.watch<NetworkMonitor>();
     final appState = context.watch<AppState>();
 
-    // افتح الـ sheet فقط إذا طُلب ولم يُفتح بعد
     if (appState.showCloudflareSheet && appState.cloudflareURL != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !_isShowingCloudflare) {
@@ -76,20 +75,18 @@ class _MainShellState extends State<MainShell> {
           if (!net.isConnected)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-              color: Colors.black.withOpacity(0.9),
+              padding: const EdgeInsets.symmetric(
+                  vertical: 6, horizontal: 16),
+              color: Colors.red.withOpacity(0.85),
               child: const Row(
                 children: [
-                  Icon(Icons.wifi_off, color: Colors.white, size: 16),
+                  Icon(Icons.wifi_off, color: Colors.white, size: 14),
                   SizedBox(width: 8),
-                  Text(
-                    'No Internet Connection',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                  Text('No Internet Connection',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500)),
                 ],
               ),
             ),
@@ -101,7 +98,8 @@ class _MainShellState extends State<MainShell> {
             unselectedItemColor: AppTheme.textTertiary,
             type: BottomNavigationBarType.fixed,
             items: const [
-              BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.home), label: 'Home'),
               BottomNavigationBarItem(
                   icon: Icon(Icons.search), label: 'Search'),
               BottomNavigationBarItem(

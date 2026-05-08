@@ -1,4 +1,3 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class CookieService {
@@ -6,38 +5,37 @@ class CookieService {
   factory CookieService() => _instance;
   CookieService._internal();
 
-  final _storage = const FlutterSecureStorage();
-  static const String _cookieKey = 'zmanga_cookies';
-  static const String _expiryKey = 'zmanga_cookie_expiry';
+  static const _kCookies = 'cf_cookies_v2';
+  static const _kDomain = 'cf_domain_v2';
+  static const _kTimestamp = 'cf_timestamp_v2';
 
-  Future<void> saveCookies(String cookies) async {
-    await _storage.write(key: _cookieKey, value: cookies);
-    // Set expiry to 24 hours from now for cf_clearance usually
-    final expiry = DateTime.now().add(const Duration(hours: 24));
+  // صلاحية الكوكيز: 23 ساعة (cf_clearance تنتهي بعد 24)
+  static const Duration _validity = Duration(hours: 23);
+
+  Future<void> saveCookies(String cookies, String domain) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_expiryKey, expiry.millisecondsSinceEpoch);
+    await prefs.setString(_kCookies, cookies);
+    await prefs.setString(_kDomain, domain);
+    await prefs.setInt(_kTimestamp, DateTime.now().millisecondsSinceEpoch);
   }
 
   Future<String> getCookieHeader() async {
-    final cookies = await _storage.read(key: _cookieKey);
-    return cookies ?? '';
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_kCookies) ?? '';
   }
 
   Future<bool> hasValidSession() async {
-    final cookies = await _storage.read(key: _cookieKey);
-    if (cookies == null || cookies.isEmpty) return false;
-
     final prefs = await SharedPreferences.getInstance();
-    final expiryMs = prefs.getInt(_expiryKey);
-    if (expiryMs == null) return false;
-
-    final expiry = DateTime.fromMillisecondsSinceEpoch(expiryMs);
-    return DateTime.now().isBefore(expiry);
+    final ts = prefs.getInt(_kTimestamp);
+    if (ts == null) return false;
+    final age = DateTime.now().millisecondsSinceEpoch - ts;
+    return age < _validity.inMilliseconds;
   }
 
   Future<void> clearCookies() async {
-    await _storage.delete(key: _cookieKey);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_expiryKey);
+    await prefs.remove(_kCookies);
+    await prefs.remove(_kDomain);
+    await prefs.remove(_kTimestamp);
   }
 }

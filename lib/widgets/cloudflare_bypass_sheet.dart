@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../state/app_state.dart';
+import '../core/cloudflare/cookie_service.dart';
+import '../core/network/user_agent.dart';
 
 class CloudflareBypassSheet extends StatefulWidget {
   final String url;
@@ -35,13 +36,10 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
   @override
   void initState() {
     super.initState();
+    // استخدم iOS Safari UA — نفس ما يستخدمه HttpService
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(
-        'Mozilla/5.0 (Linux; Android 13; Pixel 7) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/120.0.0.0 Mobile Safari/537.36',
-      )
+      ..setUserAgent(AppUserAgent.iosSafari)
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) {
           if (mounted) setState(() => _isLoading = true);
@@ -59,7 +57,7 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
     if (_solved) return;
     _pageLoadCount++;
 
-    // انتظر استقرار الصفحة
+    // انتظر استقرار الصفحة بعد حل Cloudflare
     await Future.delayed(const Duration(milliseconds: 1500));
     if (!mounted || _solved) return;
 
@@ -70,14 +68,14 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
     if (_solved) return;
 
     try {
-      // فحص عنوان الصفحة — الأداة الأكثر موثوقية
+      // فحص عنوان الصفحة
       final rawTitle = await _controller.runJavaScriptReturningResult(
         'document.title || ""',
       );
-      final title = rawTitle.toString().replaceAll('"', '').toLowerCase().trim();
+      final title =
+          rawTitle.toString().replaceAll('"', '').toLowerCase().trim();
 
-      final isStillChallenge =
-          title.isEmpty ||
+      final isStillChallenge = title.isEmpty ||
           title.contains('just a moment') ||
           title.contains('cloudflare') ||
           title.contains('checking') ||
@@ -86,35 +84,79 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
           title.contains('لحظة') ||
           title.contains('one moment');
 
-      // إذا لم نعد في صفحة التحدي بعد أول تحميل = تم الحل
       if (!isStillChallenge && _pageLoadCount > 1) {
-        await _finalizeSolve();
+        // جرب قراءة الكوكيز من JS (قد لا تشمل HttpOnly)
+        final cookieResult = await _controller.runJavaScriptReturningResult(
+          r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
+        );
+        final jsCookies =
+            cookieResult.toString().replaceAll('"', '').trim();
+
+        // استخدم WebViewCookieManager لجلب الكوكيز الحقيقية (بما فيها cf_clearance)
+        await _extractAndSaveCookies(jsCookies);
         return;
       }
 
-      // محاولة قراءة أي كوكيز متاحة
-      final cookieResult = await _controller.runJavaScriptReturningResult(
-        r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
-      );
-      final cookies = cookieResult.toString().replaceAll('"', '').trim();
-
-      // إذا وُجدت كوكيز وليس في صفحة تحدي بعد التحميل الأول
-      if (cookies.isNotEmpty &&
-          cookies != 'null' &&
-          !isStillChallenge &&
-          _pageLoadCount > 1) {
-        await _finalizeSolve(cookies: cookies);
-        return;
-      }
-
-      // فحص إضافي: إذا كان URL تغيّر بعيداً عن صفحة التحدي
+      // إذا تغيّر URL بعيداً عن صفحة التحدي
       if (_pageLoadCount > 1 &&
           currentUrl.contains(_baseDomain) &&
           !isStillChallenge) {
-        await _finalizeSolve(cookies: cookies.isNotEmpty ? cookies : null);
+        final cookieResult = await _controller.runJavaScriptReturningResult(
+          r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
+        );
+        final jsCookies =
+            cookieResult.toString().replaceAll('"', '').trim();
+        await _extractAndSaveCookies(jsCookies);
       }
     } catch (e) {
       debugPrint('CF check error: $e');
+    }
+  }
+
+  Future<void> _extractAndSaveCookies(String jsCookies) async {
+    if (_solved) return;
+
+    try {
+      // استخدم WebViewCookieManager لجلب cf_clearance (HttpOnly)
+      final cookieManager = WebViewCookieManager();
+      final cfCookie = await cookieManager.getCookies(widget.url);
+
+      // ابنِ header الكوكيز من WebViewCookieManager
+      final cookieParts = <String>[];
+      for (final cookie in cfCookie) {
+        cookieParts.add('${cookie.name}=${cookie.value}');
+      }
+
+      // أضف كوكيز JS إذا وُجدت
+      if (jsCookies.isNotEmpty && jsCookies != 'null') {
+        for (final part in jsCookies.split(';')) {
+          final trimmed = part.trim();
+          if (trimmed.isNotEmpty &&
+              !cookieParts
+                  .any((c) => c.startsWith(trimmed.split('=')[0]))) {
+            cookieParts.add(trimmed);
+          }
+        }
+      }
+
+      if (cookieParts.isEmpty && jsCookies.isEmpty) {
+        // لم نجد كوكيز بعد، انتظر أكثر
+        return;
+      }
+
+      final fullCookieHeader = cookieParts.join('; ');
+      final hasCfClearance =
+          fullCookieHeader.contains('cf_clearance') || jsCookies.isNotEmpty;
+
+      if (hasCfClearance || _pageLoadCount > 3) {
+        await _finalizeSolve(cookies: fullCookieHeader.isNotEmpty ? fullCookieHeader : jsCookies);
+      }
+    } catch (e) {
+      debugPrint('Cookie extract error: $e');
+      // fallback: احفظ JS cookies على الأقل
+      if (jsCookies.isNotEmpty) {
+        await _finalizeSolve(cookies: jsCookies);
+      }
     }
   }
 
@@ -122,18 +164,12 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
     if (_solved) return;
     _solved = true;
 
-    // احفظ الكوكيز
     if (cookies != null && cookies.isNotEmpty) {
       try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('cf_cookies', cookies);
-        await prefs.setString('cf_domain', _baseDomain);
-        await prefs.setInt(
-            'cf_timestamp', DateTime.now().millisecondsSinceEpoch);
+        await CookieService().saveCookies(cookies, _baseDomain);
       } catch (_) {}
     }
 
-    // أبلغ AppState بالنجاح — هذا سيُطلق الـ completers في MangaService
     widget.appState.onCloudflareSolved();
 
     if (mounted) {
@@ -144,7 +180,6 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
 
   void _forceClose() {
     if (_solved) return;
-    // أبلغ AppState بالإغلاق — هذا سيُطلق الـ completers بـ false
     widget.appState.onCloudflareDismissed();
     Navigator.of(context).pop(false);
   }
@@ -160,7 +195,8 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
           children: [
             // ─── Header ───────────────────────────────────────────
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: Theme.of(context).scaffoldBackgroundColor,
                 boxShadow: [
@@ -185,8 +221,7 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                         Text(
                           'اضغط على المربع ثم انتظر',
                           style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[500]),
+                              fontSize: 12, color: Colors.grey[500]),
                         ),
                       ],
                     ),
@@ -195,7 +230,8 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                     const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child:
+                          CircularProgressIndicator(strokeWidth: 2),
                     )
                   else
                     Icon(Icons.shield_outlined,
@@ -222,7 +258,8 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
                   if (_isLoading)
                     Container(
                       color: Colors.black.withOpacity(0.05),
-                      child: const Center(child: CircularProgressIndicator()),
+                      child: const Center(
+                          child: CircularProgressIndicator()),
                     ),
                 ],
               ),

@@ -16,10 +16,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-
+class _HomeScreenState extends State<HomeScreen>
+    with AutomaticKeepAliveClientMixin {
   final _service = MangaService();
   List<Manga> latestManga = [];
   List<Manga> popularManga = [];
@@ -28,6 +26,9 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   int latestPage = 1;
   bool loadingMoreLatest = false;
   int _lastReloadTrigger = 0;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -47,7 +48,6 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
 
   void _onReloadTrigger() {
     final appState = context.read<AppState>();
-    // فقط أعد التحميل إذا تغيّر العداد فعلاً
     if (appState.reloadTrigger != _lastReloadTrigger) {
       _lastReloadTrigger = appState.reloadTrigger;
       _loadLatest(reset: true);
@@ -59,10 +59,10 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     final net = NetworkMonitor.shared;
     final store = context.read<AppState>();
     if (store.cachedLatest?.isNotEmpty ?? false) {
-      latestManga = store.cachedLatest!;
+      setState(() => latestManga = store.cachedLatest!);
     }
     if (store.cachedPopular?.isNotEmpty ?? false) {
-      popularManga = store.cachedPopular!;
+      setState(() => popularManga = store.cachedPopular!);
     }
     if (net.isConnected) {
       await Future.wait([_loadLatest(reset: false), _loadPopular()]);
@@ -81,17 +81,19 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     }
     try {
       final items = await _service.fetchLatest(page: latestPage);
-      if (mounted) {
-        setState(() {
-          if (reset) latestManga = items;
-          else latestManga.addAll(items);
-          context.read<AppState>().saveCachedLatest(latestManga);
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        if (reset) {
+          latestManga = items;
+        } else {
+          latestManga.addAll(items);
+        }
+        isLoadingLatest = false;
+      });
+      context.read<AppState>().saveCachedLatest(List.from(latestManga));
     } catch (e) {
-      debugPrint('Error loading latest: $e');
-    } finally {
-      if (mounted) setState(() => isLoadingLatest = false);
+      if (!mounted) return;
+      setState(() => isLoadingLatest = false);
     }
   }
 
@@ -102,13 +104,18 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     final old = List<Manga>.from(latestManga);
     try {
       final items = await _service.fetchLatest(page: latestPage);
+      if (!mounted) return;
       setState(() {
         latestManga = old + items;
         loadingMoreLatest = false;
-        context.read<AppState>().saveCachedLatest(latestManga);
       });
+      context.read<AppState>().saveCachedLatest(List.from(latestManga));
     } catch (e) {
-      setState(() => loadingMoreLatest = false);
+      if (!mounted) return;
+      setState(() {
+        latestManga = old;
+        loadingMoreLatest = false;
+      });
     }
   }
 
@@ -116,16 +123,15 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     if (popularManga.isEmpty) setState(() => isLoadingPopular = true);
     try {
       final items = await _service.fetchPopular();
-      if (mounted) {
-        setState(() {
-          popularManga = items;
-          context.read<AppState>().saveCachedPopular(items);
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        popularManga = items;
+        isLoadingPopular = false;
+      });
+      context.read<AppState>().saveCachedPopular(items);
     } catch (e) {
-      debugPrint('Error loading popular: $e');
-    } finally {
-      if (mounted) setState(() => isLoadingPopular = false);
+      if (!mounted) return;
+      setState(() => isLoadingPopular = false);
     }
   }
 
@@ -139,59 +145,85 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
       backgroundColor: AppTheme.bg,
       body: SafeArea(
         child: !net.isConnected
-            ? Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Icon(Icons.wifi_off, size: 48, color: AppTheme.textTertiary),
-                    SizedBox(height: 12),
-                    Text('No Internet Connection',
-                        style: TextStyle(color: AppTheme.textSecondary)),
-                  ],
-                ),
-              )
+            ? _offlineView()
             : RefreshIndicator(
                 onRefresh: () =>
                     _loadLatest(reset: true).then((_) => _loadPopular()),
-                child: CustomScrollView(
-                  slivers: [
-                    SliverToBoxAdapter(child: _headerBar()),
-                    if (store.history.isNotEmpty)
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is ScrollEndNotification &&
+                        notification.metrics.extentAfter < 300 &&
+                        !loadingMoreLatest) {
+                      _loadMoreLatest();
+                    }
+                    return false;
+                  },
+                  child: CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(child: _headerBar()),
+                      if (store.history.isNotEmpty)
+                        SliverToBoxAdapter(
+                            child: _continueReadingSection(store)),
                       SliverToBoxAdapter(
-                          child: _continueReadingSection(store)),
-                    SliverToBoxAdapter(
-                        child: _sectionLabel('POPULAR', Icons.local_fire_department)),
-                    SliverToBoxAdapter(child: _popularSection()),
-                    SliverToBoxAdapter(
-                        child: _sectionLabel('LATEST UPDATES', Icons.bolt)),
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (ctx, i) {
-                          if (i < latestManga.length) {
-                            return _latestRow(latestManga[i]);
-                          } else if (loadingMoreLatest) {
-                            return const Center(
-                                child: Padding(
-                                    padding: EdgeInsets.all(16),
-                                    child: CircularProgressIndicator()));
-                          }
-                          return null;
-                        },
-                        childCount:
-                            latestManga.length + (loadingMoreLatest ? 1 : 0),
-                      ),
-                    ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 32)),
-                  ],
+                          child: _sectionLabel(
+                              'POPULAR', Icons.local_fire_department)),
+                      SliverToBoxAdapter(child: _popularSection()),
+                      SliverToBoxAdapter(
+                          child: _sectionLabel(
+                              'LATEST UPDATES', Icons.bolt)),
+                      if (isLoadingLatest && latestManga.isEmpty)
+                        const SliverToBoxAdapter(
+                          child: Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(32),
+                              child: CircularProgressIndicator(
+                                  color: AppTheme.accent),
+                            ),
+                          ),
+                        )
+                      else
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (ctx, i) {
+                              if (i < latestManga.length) {
+                                return _latestRow(latestManga[i]);
+                              } else if (loadingMoreLatest) {
+                                return const Center(
+                                    child: Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: CircularProgressIndicator(
+                                            color: AppTheme.accent)));
+                              }
+                              return null;
+                            },
+                            childCount: latestManga.length +
+                                (loadingMoreLatest ? 1 : 0),
+                          ),
+                        ),
+                      const SliverToBoxAdapter(
+                          child: SizedBox(height: 32)),
+                    ],
+                  ),
                 ),
               ),
       ),
     );
   }
 
+  Widget _offlineView() => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.wifi_off, size: 48, color: AppTheme.textTertiary),
+            SizedBox(height: 12),
+            Text('No Internet Connection',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ],
+        ),
+      );
+
   Widget _headerBar() => Padding(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: Row(
           children: [
             const Icon(Icons.book, color: AppTheme.accent, size: 22),
@@ -203,7 +235,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                     color: AppTheme.textPrimary)),
             const Spacer(),
             IconButton(
-              icon: const Icon(Icons.settings, color: AppTheme.textSecondary),
+              icon: const Icon(Icons.settings,
+                  color: AppTheme.textSecondary),
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -215,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
       );
 
   Widget _sectionLabel(String title, IconData icon) => Padding(
-        padding: const EdgeInsets.only(left: 20, bottom: 12),
+        padding: const EdgeInsets.only(left: 20, bottom: 12, top: 4),
         child: Row(children: [
           Icon(icon, size: 14, color: AppTheme.accent),
           const SizedBox(width: 6),
@@ -262,7 +295,8 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   Widget _popularSection() => SizedBox(
         height: 190,
         child: isLoadingPopular && popularManga.isEmpty
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(
+                child: CircularProgressIndicator(color: AppTheme.accent))
             : ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -287,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
       );
 
   Widget _latestRow(Manga manga) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
         child: GestureDetector(
           onTap: () => Navigator.push(
             context,
@@ -298,65 +332,53 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                     preloadCover: manga.coverURL)),
           ),
           child: Container(
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
                 color: AppTheme.card,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppTheme.border, width: 1)),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Row(
-                children: [
-                  Hero(
-                    tag: 'manga_${manga.slug}',
+                borderRadius: BorderRadius.circular(12)),
+            child: Row(
+              children: [
+                ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
                     child: CachedMangaImage(
                         url: manga.highQualityCoverURL,
-                        width: 90,
-                        height: 125,
-                        fit: BoxFit.cover),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(manga.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.textPrimary)),
-                        const SizedBox(height: 8),
-                        if (manga.latestChapterNumber.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                                color: AppTheme.accent.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8)),
-                            child: Text('Chapter ${manga.latestChapterNumber}',
-                                style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppTheme.accent)),
-                          ),
+                        width: 72,
+                        height: 100)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(manga.title,
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.textPrimary),
+                          maxLines: 2),
+                      if (manga.latestChapterNumber != null) ...[
                         const SizedBox(height: 4),
-                        if (manga.lastUpdated.isNotEmpty)
-                          Text(manga.lastUpdated,
-                              style: const TextStyle(
-                                  fontSize: 12, color: AppTheme.textSecondary)),
+                        Text('Chapter ${manga.latestChapterNumber}',
+                            style: const TextStyle(
+                                color: AppTheme.accent,
+                                fontSize: 12)),
                       ],
-                    ),
+                      if (manga.lastUpdated != null) ...[
+                        const SizedBox(height: 2),
+                        Text(manga.lastUpdated!,
+                            style: const TextStyle(
+                                color: AppTheme.textTertiary,
+                                fontSize: 11)),
+                      ],
+                    ],
                   ),
-                  const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
-                  const SizedBox(width: 12),
-                ],
-              ),
+                ),
+                const Icon(Icons.chevron_right,
+                    color: AppTheme.textTertiary),
+              ],
             ),
           ),
         ),
       );
-
 }
 
 class _ContinueReadingCard extends StatelessWidget {
@@ -368,8 +390,7 @@ class _ContinueReadingCard extends StatelessWidget {
     return Container(
       width: 116,
       height: 164,
-      decoration:
-          BoxDecoration(borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -382,7 +403,10 @@ class _ContinueReadingCard extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black.withOpacity(0.9)],
+                colors: [
+                  Colors.transparent,
+                  Colors.black.withOpacity(0.9)
+                ],
               ),
             ),
           ),
@@ -405,7 +429,8 @@ class _ContinueReadingCard extends StatelessWidget {
                   Text(
                       'Ch.${progress.chapterNumber} · p.${progress.pageIndex + 1}',
                       style: const TextStyle(
-                          fontSize: 10, color: AppTheme.accentBright)),
+                          fontSize: 10,
+                          color: AppTheme.accentBright)),
                 ]),
               ],
             ),

@@ -50,17 +50,28 @@ class _MangaDetailScreenState extends State<MangaDetailScreen> {
     try {
       final cached = context.read<AppState>().mangaCache[widget.slug];
       if (cached != null) {
-        manga = cached;
-        isLoading = false;
+        setState(() {
+          manga = cached;
+          isLoading = false;
+        });
+        // حدّث في الخلفية
+        _service.fetchDetail(widget.slug).then((m) {
+          if (mounted) {
+            setState(() => manga = m);
+            context.read<AppState>().cacheManga(m);
+          }
+        }).catchError((_) {});
         return;
       }
       final m = await _service.fetchDetail(widget.slug);
+      if (!mounted) return;
       setState(() {
         manga = m;
         isLoading = false;
-        context.read<AppState>().cacheManga(m);
       });
+      context.read<AppState>().cacheManga(m);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         isLoading = false;
         error = e.toString();

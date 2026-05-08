@@ -46,35 +46,24 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late String currentChapterSlug;
   int currentPage = 0;
 
-  // إعدادات القارئ
   bool autoLoadNextChapter = true;
-  bool tapToScrollEnabled = false;
-  bool zoomEnabled = false;
-  bool optimizationEnabled = false;
-  bool preloadNextChapter = false;
-  bool keepScreenOn = false;
-  bool reduceMotion = false;
 
   @override
   void initState() {
     super.initState();
     currentChapterSlug = widget.chapter.slug;
-    _loadSettings();
     _loadInitial();
-  }
-
-  void _loadSettings() {
-    // يمكن ربطها بـ SharedPreferences لاحقاً
   }
 
   Future<void> _loadInitial() async {
     setState(() {
       isLoading = true;
       error = null;
+      allPages = [];
     });
     try {
       List<String> urls;
-      if (widget.preloadedPages != null) {
+      if (widget.preloadedPages != null && widget.preloadedPages!.isNotEmpty) {
         urls = widget.preloadedPages!;
       } else {
         final localPages =
@@ -88,35 +77,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
               widget.manga.slug, widget.chapter.slug);
         }
       }
-      totalPages = urls.length;
-      // محاكاة تحميل سريعة
-      for (int i = 0; i < urls.length && i < 3; i++) {
-        await Future.delayed(const Duration(milliseconds: 10));
-        setState(() {
-          loadedPagesCount = i + 1;
-          loadingProgress = loadedPagesCount / totalPages;
-        });
-      }
+
+      // إصلاح الشاشة السوداء: تأكد وجود صفحات
       if (urls.isEmpty) {
-        throw Exception('No images found for this chapter');
+        throw Exception('No chapter images found');
       }
+
+      totalPages = urls.length;
+
       setState(() {
-        allPages =
-            urls.map((u) => _PageEntry(widget.chapter.slug, u)).toList();
-        chapterBoundaries = [
-          _ChapterBoundary(widget.chapter.slug, 0)
-        ];
+        allPages = urls.map((u) => _PageEntry(widget.chapter.slug, u)).toList();
+        chapterBoundaries = [_ChapterBoundary(widget.chapter.slug, 0)];
         loadedChapters = {widget.chapter.slug};
         isLoading = false;
-        currentPage =
-            widget.initialPage.clamp(0, allPages.length - 1);
-        loadedPagesCount = totalPages;
         loadingProgress = 1.0;
+        loadedPagesCount = totalPages;
+        currentPage = widget.initialPage.clamp(0, allPages.length - 1);
       });
     } catch (e) {
+      // إصلاح الشاشة السوداء: دائماً أظهر error UI
       setState(() {
-        error = e.toString();
+        error = e.toString().replaceAll('Exception: ', '');
         isLoading = false;
+        allPages = [];
       });
     }
   }
@@ -133,23 +116,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
     setState(() => loadingNext = true);
     try {
       List<String> urls;
-      final localPages =
-          _dm.getPages(widget.manga.slug, next.slug);
+      final localPages = _dm.getPages(widget.manga.slug, next.slug);
       if (localPages != null) {
         urls = localPages;
       } else if (widget.isOfflineMode) {
         setState(() => loadingNext = false);
         return;
       } else {
-        urls = await _service.fetchChapterPages(
-            widget.manga.slug, next.slug);
+        urls = await _service.fetchChapterPages(widget.manga.slug, next.slug);
+      }
+      if (urls.isEmpty) {
+        setState(() => loadingNext = false);
+        return;
       }
       setState(() {
         final startIdx = allPages.length;
-        allPages
-            .addAll(urls.map((u) => _PageEntry(next.slug, u)));
-        chapterBoundaries
-            .add(_ChapterBoundary(next.slug, startIdx));
+        allPages.addAll(urls.map((u) => _PageEntry(next.slug, u)));
+        chapterBoundaries.add(_ChapterBoundary(next.slug, startIdx));
         loadedChapters.add(next.slug);
         loadingNext = false;
       });
@@ -221,30 +204,26 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     style: TextStyle(color: Colors.white54)))
           else
             GestureDetector(
-              onTap: _handleTap,
+              onTap: _toggleUI,
               child: PageView.builder(
                 scrollDirection: Axis.vertical,
-                itemCount:
-                    allPages.length + (loadingNext ? 1 : 0),
-                controller: PageController(
-                    initialPage: widget.initialPage),
+                itemCount: allPages.length + (loadingNext ? 1 : 0),
+                controller:
+                    PageController(initialPage: widget.initialPage),
                 onPageChanged: _updateCurrentPage,
                 itemBuilder: (_, idx) {
                   if (idx < allPages.length) {
                     if (chapterBoundaries
                             .any((b) => b.startIndex == idx) &&
                         idx > 0) {
+                      final b = chapterBoundaries
+                          .firstWhere((b) => b.startIndex == idx);
                       final num = widget.manga.chapters
-                          .firstWhere((c) =>
-                              c.slug ==
-                              chapterBoundaries
-                                  .firstWhere(
-                                      (b) => b.startIndex == idx)
-                                  .slug)
+                          .firstWhere((c) => c.slug == b.slug,
+                              orElse: () => widget.chapter)
                           .number;
                       return Column(
-                        mainAxisAlignment:
-                            MainAxisAlignment.center,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           _chapterSeparator(num),
                           Expanded(child: _pageItem(idx)),
@@ -259,6 +238,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 },
               ),
             ),
+
           // زر الإغلاق
           SafeArea(
             child: Align(
@@ -273,9 +253,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
               ),
             ),
           ),
+
           // الشريط العلوي
-          if (showUI && !isLoading && allPages.isNotEmpty)
-            _topBar(),
+          if (showUI && !isLoading && allPages.isNotEmpty) _topBar(),
+
           // الشريط السفلي
           if (showUI && !isLoading && allPages.isNotEmpty)
             Positioned(
@@ -288,49 +269,56 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  void _handleTap() {
-    if (tapToScrollEnabled && currentPage < allPages.length - 1) {
-      // انتقل للصفحة التالية
-      setState(() => currentPage = currentPage + 1);
-    } else {
-      _toggleUI();
-    }
-  }
-
   Widget _loadingView() => Center(
         child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(
-                  color: AppTheme.accent),
-              const SizedBox(height: 16),
-              if (totalPages > 0) ...[
-                LinearProgressIndicator(
-                    value: loadingProgress,
-                    color: AppTheme.accent),
-                const SizedBox(height: 8),
-                Text('$loadedPagesCount / $totalPages pages',
-                    style: const TextStyle(
-                        color: AppTheme.textSecondary)),
-              ],
-            ]),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(color: AppTheme.accent),
+            const SizedBox(height: 16),
+            if (totalPages > 0) ...[
+              LinearProgressIndicator(
+                  value: loadingProgress, color: AppTheme.accent),
+              const SizedBox(height: 8),
+              Text('$loadedPagesCount / $totalPages pages',
+                  style: const TextStyle(color: AppTheme.textSecondary)),
+            ],
+          ],
+        ),
       );
 
   Widget _errorView() => Center(
-        child: Column(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.warning_amber,
-                  color: AppTheme.danger, size: 44),
+                  color: AppTheme.danger, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                error ?? 'Failed to load chapter',
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: _loadInitial,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.accent,
+                  foregroundColor: Colors.white,
+                ),
+              ),
               const SizedBox(height: 12),
-              Text(error!,
-                  style:
-                      const TextStyle(color: Colors.white54)),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                  onPressed: _loadInitial,
-                  child: const Text('Retry')),
-            ]),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Back',
+                    style: TextStyle(color: AppTheme.textSecondary)),
+              ),
+            ],
+          ),
+        ),
       );
 
   Widget _pageItem(int idx) =>
@@ -340,8 +328,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         padding: const EdgeInsets.symmetric(vertical: 20),
         child: Row(children: [
           Expanded(
-              child: Container(
-                  height: 1, color: Colors.white12)),
+              child: Container(height: 1, color: Colors.white12)),
           Container(
             padding: const EdgeInsets.symmetric(
                 horizontal: 14, vertical: 8),
@@ -357,8 +344,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     fontWeight: FontWeight.w600)),
           ),
           Expanded(
-              child: Container(
-                  height: 1, color: Colors.white12)),
+              child: Container(height: 1, color: Colors.white12)),
         ]),
       );
 
@@ -389,8 +375,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                             fontSize: 14)),
                     Text('Chapter $currentChNum',
                         style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12)),
+                            color: Colors.white54, fontSize: 12)),
                   ]),
             ),
             Text('${currentPage + 1} / ${allPages.length}',
@@ -403,7 +388,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Widget _bottomBar() => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // زر الصفحة الحالية
           Center(
             child: Container(
               margin: const EdgeInsets.only(bottom: 8),
@@ -412,13 +396,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
               decoration: BoxDecoration(
                   color: Colors.black54,
                   borderRadius: BorderRadius.circular(20)),
-              child: Text(
-                  '${currentPage + 1} / ${allPages.length}',
+              child: Text('${currentPage + 1} / ${allPages.length}',
                   style: const TextStyle(
                       color: Colors.white70, fontSize: 12)),
             ),
           ),
-          // شريط التقدم
           Container(
             height: 2,
             child: LinearProgressIndicator(

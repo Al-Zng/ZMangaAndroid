@@ -12,10 +12,8 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-
+class _SearchScreenState extends State<SearchScreen>
+    with AutomaticKeepAliveClientMixin {
   final _controller = TextEditingController();
   final _service = MangaService();
   List<Manga> results = [];
@@ -24,6 +22,9 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   bool hasMore = true;
   bool loadingMore = false;
   String? selectedGenre;
+
+  @override
+  bool get wantKeepAlive => true;
 
   static const genres = [
     'درامـا', 'رومانسى', 'فانتازا', 'أكشن', 'كوميدى',
@@ -42,8 +43,10 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     if (reset) {
       page = 1;
       hasMore = true;
-      results.clear();
-      setState(() => isLoading = true);
+      setState(() {
+        results = [];
+        isLoading = true;
+      });
     }
     try {
       List<Manga> items;
@@ -52,17 +55,19 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       } else {
         items = await _service.fetchByGenre(selectedGenre!, page: page);
       }
-      if (mounted) {
-        setState(() {
-          if (reset) results = items;
-          else results.addAll(items);
-          hasMore = items.isNotEmpty;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        if (reset) {
+          results = items;
+        } else {
+          results.addAll(items);
+        }
+        hasMore = items.isNotEmpty;
+        isLoading = false;
+      });
     } catch (e) {
-      debugPrint('Search error: $e');
-    } finally {
-      if (mounted) setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() => isLoading = false);
     }
   }
 
@@ -70,7 +75,9 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     if (loadingMore || !hasMore) return;
     setState(() => loadingMore = true);
     page++;
-    _search(reset: false).then((_) => setState(() => loadingMore = false));
+    _search(reset: false).then((_) {
+      if (mounted) setState(() => loadingMore = false);
+    });
   }
 
   @override
@@ -87,7 +94,9 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
             const Divider(color: AppTheme.border),
             Expanded(
               child: isLoading && results.isEmpty
-                  ? const Center(child: CircularProgressIndicator(color: AppTheme.accent))
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                          color: AppTheme.accent))
                   : results.isEmpty && _controller.text.isNotEmpty
                       ? _emptyState()
                       : results.isEmpty
@@ -108,14 +117,15 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           decoration: InputDecoration(
             hintText: 'Search manga...',
             hintStyle: const TextStyle(color: AppTheme.textTertiary),
-            prefixIcon: const Icon(Icons.search, color: AppTheme.textSecondary),
+            prefixIcon: const Icon(Icons.search,
+                color: AppTheme.textSecondary),
             suffixIcon: _controller.text.isNotEmpty
                 ? IconButton(
-                    icon: const Icon(Icons.cancel, color: AppTheme.textTertiary),
+                    icon: const Icon(Icons.cancel,
+                        color: AppTheme.textTertiary),
                     onPressed: () {
                       _controller.clear();
-                      results.clear();
-                      setState(() {});
+                      setState(() => results = []);
                     },
                   )
                 : null,
@@ -123,11 +133,13 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
             fillColor: AppTheme.surface,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppTheme.border),
+              borderSide:
+                  const BorderSide(color: AppTheme.border),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppTheme.border),
+              borderSide:
+                  const BorderSide(color: AppTheme.border),
             ),
           ),
           onChanged: (_) => setState(() {}),
@@ -139,28 +151,28 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         height: 50,
         child: ListView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           children: [
             _pill(
               text: 'All',
               selected: selectedGenre == null,
-              onTap: () {
+              onTap: () => setState(() {
                 selectedGenre = null;
-                results.clear();
-                setState(() {});
-              },
+                results = [];
+              }),
             ),
-            ...genres.map(
-              (g) => _pill(
-                text: g,
-                selected: selectedGenre == g,
-                onTap: () {
-                  selectedGenre = g;
-                  results.clear();
-                  _search();
-                },
-              ),
-            ),
+            ...genres.map((g) => _pill(
+                  text: g,
+                  selected: selectedGenre == g,
+                  onTap: () {
+                    setState(() {
+                      selectedGenre = g;
+                      results = [];
+                    });
+                    _search();
+                  },
+                )),
           ],
         ),
       );
@@ -175,18 +187,22 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         child: GestureDetector(
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: selected ? AppTheme.accent : AppTheme.card,
               borderRadius: BorderRadius.circular(20),
-              border: selected ? null : Border.all(color: AppTheme.border),
+              border: selected
+                  ? null
+                  : Border.all(color: AppTheme.border),
             ),
             child: Text(
               text,
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: selected ? AppTheme.bg : AppTheme.textSecondary,
+                color:
+                    selected ? AppTheme.bg : AppTheme.textSecondary,
               ),
             ),
           ),
@@ -201,7 +217,8 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         },
         child: GridView.builder(
           padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          gridDelegate:
+              const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,
             childAspectRatio: 0.65,
             crossAxisSpacing: 12,
@@ -211,7 +228,8 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           itemBuilder: (_, i) {
             if (i >= results.length) {
               return const Center(
-                  child: CircularProgressIndicator(color: AppTheme.accent));
+                  child: CircularProgressIndicator(
+                      color: AppTheme.accent));
             }
             final m = results[i];
             return GestureDetector(
@@ -231,13 +249,16 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                   Expanded(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: CachedMangaImage(url: m.highQualityCoverURL),
+                      child: CachedMangaImage(
+                          url: m.highQualityCoverURL),
                     ),
                   ),
+                  const SizedBox(height: 4),
                   Text(m.title,
                       maxLines: 2,
                       style: const TextStyle(
-                          fontSize: 11, color: AppTheme.textPrimary)),
+                          fontSize: 11,
+                          color: AppTheme.textPrimary)),
                 ],
               ),
             );
