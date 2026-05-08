@@ -14,7 +14,6 @@ class MangaService {
   factory MangaService() => _instance;
   MangaService._internal();
 
-  // WebView مخصص فقط لتحميل صفحات الفصول (lazy loading) ولتجاوز Cloudflare
   WebViewController? _chapterWebViewController;
 
   WebViewController _getChapterWebViewController() {
@@ -22,61 +21,95 @@ class MangaService {
     _chapterWebViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent(
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Linux; Android 13; Pixel 7) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Mobile Safari/537.36',
       );
     return _chapterWebViewController!;
   }
 
-  // MARK: - fetchHTML عبر HTTP Client مباشرة
-  Future<String> fetchHTML(String urlString) async {
+  // MARK: - Core fetchHTML مع انتظار حل Cloudflare تلقائياً
+  Future<String> fetchHTML(String urlString, {int retryCount = 0}) async {
     final uri = Uri.parse(urlString);
     final client = HttpClient();
-    final request = await client.getUrl(uri);
-    request.headers.set('User-Agent',
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1');
-    request.headers.set('Referer', 'https://lekmanga.site');
-    request.headers.set('Accept',
-        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
-    request.headers.set('Accept-Language', 'ar,en;q=0.9');
 
-    // حقن كوكيز Cloudflare المحفوظة
-    final prefs = await SharedPreferences.getInstance();
-    final savedCookies = prefs.getString('cf_cookies');
-    if (savedCookies != null && savedCookies.isNotEmpty) {
-      request.headers.set('Cookie', savedCookies);
-    }
+    try {
+      final request = await client.getUrl(uri);
+      request.headers.set(
+          'User-Agent',
+          'Mozilla/5.0 (Linux; Android 13; Pixel 7) '
+          'AppleWebKit/537.36 (KHTML, like Gecko) '
+          'Chrome/120.0.0.0 Mobile Safari/537.36');
+      request.headers.set('Referer', baseURL);
+      request.headers.set('Accept',
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+      request.headers.set('Accept-Language', 'ar,en;q=0.9');
 
-    final response = await request.close();
-    final responseBody = await response.transform(utf8.decoder).join();
-
-    if (response.statusCode == 403 ||
-        responseBody.contains('Just a moment') ||
-        responseBody.contains('cf-browser-verification') ||
-        responseBody.contains('Checking your browser') ||
-        responseBody.contains('Attention Required')) {
-      // Cloudflare detected -> trigger popup
-      if (AppState.current != null && !AppState.current!.showCloudflareSheet) {
-        AppState.current!.triggerCloudflare(urlString);
+      // حقن كوكيز Cloudflare المحفوظة
+      final prefs = await SharedPreferences.getInstance();
+      final savedCookies = prefs.getString('cf_cookies');
+      if (savedCookies != null && savedCookies.isNotEmpty) {
+        request.headers.set('Cookie', savedCookies);
       }
-      return '';
-    }
-    if (response.statusCode == 200) {
-      return responseBody;
-    } else {
-      throw Exception('Failed to load: ${response.statusCode}');
+
+      final response = await request.close();
+      final responseBody = await response.transform(utf8.decoder).join();
+
+      final isCloudflareBlock =
+          response.statusCode == 403 ||
+          response.statusCode == 503 ||
+          responseBody.contains('Just a moment') ||
+          responseBody.contains('cf-browser-verification') ||
+          responseBody.contains('Checking your browser') ||
+          responseBody.contains('Attention Required') ||
+          responseBody.contains('cf_chl_opt');
+
+      if (isCloudflareBlock) {
+        if (retryCount >= 2) {
+          // تجاوزنا الحد الأقصى للمحاولات
+          throw Exception('Cloudflare challenge could not be solved');
+        }
+
+        // أطلق الـ sheet وانتظر الحل
+        final appState = AppState.current;
+        if (appState == null) return '';
+
+        final solved = await appState.triggerCloudflare(urlString);
+
+        if (solved) {
+          // أعد المحاولة بعد الحل
+          return fetchHTML(urlString, retryCount: retryCount + 1);
+        } else {
+          // أُغلق بالإجبار
+          throw Exception('Cloudflare: user dismissed');
+        }
+      }
+
+      if (response.statusCode == 200) {
+        return responseBody;
+      } else {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      if (e.toString().contains('Cloudflare')) rethrow;
+      throw Exception('Network error: $e');
+    } finally {
+      client.close();
     }
   }
 
-  // MARK: - fetchHTMLViaWebView (مثل iOS تماماً)
+  // MARK: - fetchHTMLViaWebView
   Future<String> _fetchHTMLViaWebView(String urlString) async {
     final controller = _getChapterWebViewController();
     final completer = Completer<String>();
 
     controller.setNavigationDelegate(NavigationDelegate(
       onPageFinished: (url) async {
+        await Future.delayed(const Duration(milliseconds: 500));
         final html = await controller.runJavaScriptReturningResult(
-          'document.documentElement.outerHTML',
-        ) as String? ?? '';
+              'document.documentElement.outerHTML',
+            ) as String? ??
+            '';
         if (!completer.isCompleted) {
           completer.complete(html);
         }
@@ -94,14 +127,12 @@ class MangaService {
 
   // MARK: - Public API
   Future<List<Manga>> fetchLatest({int page = 1}) async {
-    final html =
-        await fetchHTML('$baseURL/manga/?m_orderby=latest&page=$page');
+    final html = await fetchHTML('$baseURL/manga/?m_orderby=latest&page=$page');
     return _parseMangaList(html, extractChapterInfo: true);
   }
 
   Future<List<Manga>> fetchPopular({int page = 1}) async {
-    final html =
-        await fetchHTML('$baseURL/manga/?m_orderby=views&page=$page');
+    final html = await fetchHTML('$baseURL/manga/?m_orderby=views&page=$page');
     return _parseMangaList(html, extractChapterInfo: false);
   }
 
@@ -118,14 +149,12 @@ class MangaService {
   }
 
   Future<List<Manga>> fetchByGenre(String genre, {int page = 1}) async {
-    final html =
-        await fetchHTML('$baseURL/manga-genre/$genre/?page=$page');
+    final html = await fetchHTML('$baseURL/manga-genre/$genre/?page=$page');
     return _parseMangaList(html, extractChapterInfo: false);
   }
 
   Future<Manga> fetchDetail(String slug) async {
     final html = await fetchHTML('$baseURL/manga/$slug/');
-    if (html.isEmpty) throw Exception('Cloudflare challenge');
     return _parseMangaDetail(html, slug);
   }
 
@@ -133,20 +162,17 @@ class MangaService {
       String mangaSlug, String chapterSlug) async {
     final urlString = '$baseURL/manga/$mangaSlug/$chapterSlug/';
 
-    // 1. جلب HTML أولاً عبر URLSession للحصول على chapter_id
-    final html = await fetchHTML(urlString);
-    if (html.isEmpty) {
-      // إذا كان فارغاً بسبب Cloudflare، جرب WebView
+    // 1. جلب HTML عبر HTTP
+    String html;
+    try {
+      html = await fetchHTML(urlString);
+    } catch (e) {
+      // إذا فشل (مثلاً المستخدم أغلق الـ sheet)، جرب WebView
       try {
         final wvHTML = await _fetchHTMLViaWebView(urlString);
-        if (wvHTML.contains('Just a moment') ||
-            wvHTML.contains('Checking your browser')) {
-          throw Exception('Cloudflare challenge');
-          // triggerCloudflare تم استدعاؤها بالفعل من fetchHTML
-        }
         return _parseChapterPages(wvHTML);
-      } catch (e) {
-        throw Exception('Cloudflare challenge');
+      } catch (_) {
+        throw Exception('Failed to load chapter');
       }
     }
 
@@ -163,11 +189,11 @@ class MangaService {
       } catch (_) {}
     }
 
-    // 3. محاولة parse مباشر من HTML الأولي
+    // 3. Parse مباشر من HTML
     final directPages = _parseChapterPages(html);
     if (directPages.isNotEmpty) return directPages;
 
-    // 4. آخر حل: WebView مع انتظار lazy loading
+    // 4. آخر حل: WebView
     try {
       final wvHTML = await _fetchHTMLViaWebView(urlString);
       return _parseChapterPages(wvHTML);
@@ -180,47 +206,53 @@ class MangaService {
   Future<List<String>> _fetchChapterImagesViaAJAX(String chapterId) async {
     final ajaxURL = Uri.parse('$baseURL/wp-admin/admin-ajax.php');
     final client = HttpClient();
-    final request = await client.postUrl(ajaxURL);
-    request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
-    request.headers.set('Referer', baseURL);
-    request.headers.set('X-Requested-With', 'XMLHttpRequest');
-    request.headers.set('User-Agent',
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1');
-    request.write('action=manga_get_chapter_img_list&chapter_id=$chapterId');
-    final response = await request.close();
-    final responseBody = await response.transform(utf8.decoder).join();
+    try {
+      final request = await client.postUrl(ajaxURL);
+      request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
+      request.headers.set('Referer', baseURL);
+      request.headers.set('X-Requested-With', 'XMLHttpRequest');
+      request.headers.set(
+          'User-Agent',
+          'Mozilla/5.0 (Linux; Android 13; Pixel 7) '
+          'AppleWebKit/537.36 (KHTML, like Gecko) '
+          'Chrome/120.0.0.0 Mobile Safari/537.36');
+      request.write('action=manga_get_chapter_img_list&chapter_id=$chapterId');
+      final response = await request.close();
+      final responseBody = await response.transform(utf8.decoder).join();
 
-    if (response.statusCode == 200) {
-      try {
-        final List<dynamic> arr = jsonDecode(responseBody);
-        return arr
-            .map((e) => e['url'] as String?)
-            .where((url) => url != null && url.startsWith('http'))
-            .cast<String>()
-            .toList();
-      } catch (_) {}
-      try {
-        final Map<String, dynamic> dict = jsonDecode(responseBody);
-        if (dict['data'] is Map && dict['data']['images'] is List) {
-          return (dict['data']['images'] as List)
+      if (response.statusCode == 200) {
+        try {
+          final List<dynamic> arr = jsonDecode(responseBody);
+          return arr
               .map((e) => e['url'] as String?)
               .where((url) => url != null && url.startsWith('http'))
               .cast<String>()
               .toList();
+        } catch (_) {}
+        try {
+          final Map<String, dynamic> dict = jsonDecode(responseBody);
+          if (dict['data'] is Map && dict['data']['images'] is List) {
+            return (dict['data']['images'] as List)
+                .map((e) => e['url'] as String?)
+                .where((url) => url != null && url.startsWith('http'))
+                .cast<String>()
+                .toList();
+          }
+        } catch (_) {}
+        if (responseBody.contains('<img')) {
+          return _parseChapterPages(responseBody);
         }
-      } catch (_) {}
-      if (responseBody.contains('<img')) {
-        return _parseChapterPages(responseBody);
       }
+    } finally {
+      client.close();
     }
     return [];
   }
 
-  // ========================
-  // دوال التحليل (مطابقة لـ Swift)
-  // ========================
+  // ─── دوال التحليل ────────────────────────────────────────────────
   List<Manga> _parseMangaList(String html,
       {required bool extractChapterInfo}) {
+    if (html.isEmpty) return [];
     final results = <Manga>[];
     final cardPattern = RegExp(
       r'<div class="page-item-detail[^"]*manga[^"]*">(.*?)</div>\s*</div>\s*</div>',
@@ -306,15 +338,11 @@ class MangaService {
     return '';
   }
 
-  bool _isValidImageURL(String url) =>
-      url.startsWith('http') &&
-      ['.jpg', '.jpeg', '.png', '.webp'].any(url.toLowerCase().contains);
-
   List<Manga> _parseMangaSimple(String html,
       {required bool extractChapterInfo}) {
     final results = <Manga>[];
     final linkPattern = RegExp(
-        r'href="(https?://[^/]+/manga/([^/"]+)/)\"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{3,})"');
+        r'href="(https?://[^/]+/manga/([^/"]+)/)"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{3,})"');
     for (final match in linkPattern.allMatches(html)) {
       final slug = match.group(2)!;
       final rawTitle = match.group(3)!.trim();
@@ -382,7 +410,8 @@ class MangaService {
     final authorReg =
         RegExp(r'class="author-content">(.*?)</div>', dotAll: true);
     final author =
-        authorReg.firstMatch(html)?.group(1)?.let((it) => _stripHTML(it)) ?? '';
+        authorReg.firstMatch(html)?.group(1)?.let((it) => _stripHTML(it)) ??
+            '';
 
     final genres = <String>[];
     final genreReg = RegExp(r'/manga-genre/[^/]+/">([^<]+)</a>');
@@ -407,10 +436,8 @@ class MangaService {
         final numberPart = numberReg.firstMatch(block)?.group(1) ?? slugPart;
         final dateReg = RegExp(r'i[^>]*>([^<]+)<');
         final date = dateReg.firstMatch(block)?.group(1)?.trim() ?? '';
-        if (slugPart.isNotEmpty &&
-            !chapters.any((c) => c.slug == slugPart)) {
-          chapters.add(
-              Chapter(slug: slugPart, number: numberPart, date: date));
+        if (slugPart.isNotEmpty && !chapters.any((c) => c.slug == slugPart)) {
+          chapters.add(Chapter(slug: slugPart, number: numberPart, date: date));
         }
       }
     }
@@ -450,14 +477,11 @@ class MangaService {
     final imgRegex = RegExp(allImgPattern, dotAll: true, caseSensitive: false);
     for (final match in imgRegex.allMatches(content)) {
       final tag = match.group(0)!;
-      // تجاهل الصور التي لا تحمل أي من هذه السمات (صور أغلفة، أيقونات)
       if (!tag.contains('wp-manga-chapter-img') &&
           !tag.contains('data-src') &&
           !tag.contains('data-lazy-src')) continue;
 
-      final url = RegExp(r'data-lazy-src="([^"]+)"')
-              .firstMatch(tag)
-              ?.group(1) ??
+      final url = RegExp(r'data-lazy-src="([^"]+)"').firstMatch(tag)?.group(1) ??
           RegExp(r'data-src="([^"]+)"').firstMatch(tag)?.group(1) ??
           RegExp(r'src="([^"]+)"').firstMatch(tag)?.group(1);
       if (url != null &&
@@ -473,8 +497,7 @@ class MangaService {
   }
 
   String _extractReadingContent(String html) {
-    final startPattern =
-        r'<div[^>]+class="[^"]*reading-content[^"]*"[^>]*>';
+    final startPattern = r'<div[^>]+class="[^"]*reading-content[^"]*"[^>]*>';
     final startRegex = RegExp(startPattern, caseSensitive: false);
     final startMatch = startRegex.firstMatch(html);
     if (startMatch == null) return html;
