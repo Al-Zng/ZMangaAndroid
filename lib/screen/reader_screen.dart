@@ -97,6 +97,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
           loadingProgress = loadedPagesCount / totalPages;
         });
       }
+      if (urls.isEmpty) {
+        throw Exception('No images found for this chapter');
+      }
       setState(() {
         allPages =
             urls.map((u) => _PageEntry(widget.chapter.slug, u)).toList();

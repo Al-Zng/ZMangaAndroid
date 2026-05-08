@@ -12,7 +12,10 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final _controller = TextEditingController();
   final _service = MangaService();
   List<Manga> results = [];
@@ -49,14 +52,17 @@ class _SearchScreenState extends State<SearchScreen> {
       } else {
         items = await _service.fetchByGenre(selectedGenre!, page: page);
       }
-      setState(() {
-        if (reset) results = items;
-        else results.addAll(items);
-        hasMore = items.isNotEmpty;
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          if (reset) results = items;
+          else results.addAll(items);
+          hasMore = items.isNotEmpty;
+        });
+      }
     } catch (e) {
-      setState(() => isLoading = false);
+      debugPrint('Search error: $e');
+    } finally {
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
@@ -69,6 +75,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
       backgroundColor: AppTheme.bg,
       body: SafeArea(

@@ -16,7 +16,10 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   final _service = MangaService();
   List<Manga> latestManga = [];
   List<Manga> popularManga = [];
@@ -78,14 +81,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     try {
       final items = await _service.fetchLatest(page: latestPage);
-      setState(() {
-        if (reset) latestManga = items;
-        else latestManga.addAll(items);
-        isLoadingLatest = false;
-        context.read<AppState>().saveCachedLatest(latestManga);
-      });
+      if (mounted) {
+        setState(() {
+          if (reset) latestManga = items;
+          else latestManga.addAll(items);
+          context.read<AppState>().saveCachedLatest(latestManga);
+        });
+      }
     } catch (e) {
-      setState(() => isLoadingLatest = false);
+      debugPrint('Error loading latest: $e');
+    } finally {
+      if (mounted) setState(() => isLoadingLatest = false);
     }
   }
 
@@ -110,18 +116,22 @@ class _HomeScreenState extends State<HomeScreen> {
     if (popularManga.isEmpty) setState(() => isLoadingPopular = true);
     try {
       final items = await _service.fetchPopular();
-      setState(() {
-        popularManga = items;
-        isLoadingPopular = false;
-        context.read<AppState>().saveCachedPopular(items);
-      });
+      if (mounted) {
+        setState(() {
+          popularManga = items;
+          context.read<AppState>().saveCachedPopular(items);
+        });
+      }
     } catch (e) {
-      setState(() => isLoadingPopular = false);
+      debugPrint('Error loading popular: $e');
+    } finally {
+      if (mounted) setState(() => isLoadingPopular = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final store = context.watch<AppState>();
     final net = context.watch<NetworkMonitor>();
 
@@ -277,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
   Widget _latestRow(Manga manga) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: GestureDetector(
           onTap: () => Navigator.push(
             context,
@@ -288,52 +298,65 @@ class _HomeScreenState extends State<HomeScreen> {
                     preloadCover: manga.coverURL)),
           ),
           child: Container(
-            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
                 color: AppTheme.card,
-                borderRadius: BorderRadius.circular(12)),
-            child: Row(
-              children: [
-                ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.border, width: 1)),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Row(
+                children: [
+                  Hero(
+                    tag: 'manga_${manga.slug}',
                     child: CachedMangaImage(
                         url: manga.highQualityCoverURL,
-                        width: 80,
-                        height: 110)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(manga.title,
-                          style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.textPrimary),
-                          maxLines: 2),
-                      if (manga.latestChapterNumber != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                            'Chapter ${manga.latestChapterNumber}',
-                            style: const TextStyle(
-                                color: AppTheme.accent, fontSize: 12)),
-                      ],
-                      if (manga.lastUpdated != null) ...[
-                        const SizedBox(height: 2),
-                        Text(manga.lastUpdated!,
-                            style: const TextStyle(
-                                color: AppTheme.textTertiary,
-                                fontSize: 11)),
-                      ],
-                    ],
+                        width: 90,
+                        height: 125,
+                        fit: BoxFit.cover),
                   ),
-                ),
-                const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
-              ],
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(manga.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.textPrimary)),
+                        const SizedBox(height: 8),
+                        if (manga.latestChapterNumber.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                                color: AppTheme.accent.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8)),
+                            child: Text('Chapter ${manga.latestChapterNumber}',
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.accent)),
+                          ),
+                        const SizedBox(height: 4),
+                        if (manga.lastUpdated.isNotEmpty)
+                          Text(manga.lastUpdated,
+                              style: const TextStyle(
+                                  fontSize: 12, color: AppTheme.textSecondary)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: AppTheme.textTertiary),
+                  const SizedBox(width: 12),
+                ],
+              ),
             ),
           ),
         ),
       );
+
 }
 
 class _ContinueReadingCard extends StatelessWidget {
