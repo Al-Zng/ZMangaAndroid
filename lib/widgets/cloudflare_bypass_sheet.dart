@@ -21,213 +21,145 @@ class CloudflareBypassSheet extends StatefulWidget {
 
 class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
   late WebViewController _controller;
-  bool _solved = false;
-  bool _closed = false;
-  bool _isLoading = true;
+  bool _solved  = false;
+  bool _closed  = false;
+  bool _isLoading   = true;
+  bool _isVerifying = false; // نحن في مرحلة التحقق بعد اكتشاف صفحة نظيفة
+  int  _consecutiveClean = 0;
+  int  _challengeRound   = 1; // عدد جولات CF
   Timer? _checkTimer;
-  int _consecutiveClean = 0;
 
-  // JS يُخفي علامات WebView عن Cloudflare
-  static const String _stealthJS = '''
-(function() {
-  // أخفِ webdriver
-  Object.defineProperty(navigator, 'webdriver', {
-    get: () => undefined,
-    configurable: true
-  });
-
-  // أضف plugins مثل Safari
-  Object.defineProperty(navigator, 'plugins', {
-    get: () => {
-      const arr = [
-        { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-        { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: '' },
-      ];
-      arr.item = i => arr[i];
-      arr.namedItem = name => arr.find(p => p.name === name) || null;
-      arr.refresh = () => {};
-      Object.setPrototypeOf(arr, PluginArray.prototype);
-      return arr;
-    },
-    configurable: true
-  });
-
-  // languages
-  Object.defineProperty(navigator, 'languages', {
-    get: () => ['ar', 'ar-SA', 'en-US', 'en'],
-    configurable: true
-  });
-
-  // platform مثل iPhone
-  Object.defineProperty(navigator, 'platform', {
-    get: () => 'iPhone',
-    configurable: true
-  });
-
-  // vendor
-  Object.defineProperty(navigator, 'vendor', {
-    get: () => 'Apple Computer, Inc.',
-    configurable: true
-  });
-
-  // maxTouchPoints
-  Object.defineProperty(navigator, 'maxTouchPoints', {
-    get: () => 5,
-    configurable: true
-  });
-
-  // hardwareConcurrency
-  Object.defineProperty(navigator, 'hardwareConcurrency', {
-    get: () => 4,
-    configurable: true
-  });
-
-  // deviceMemory
+  // ─── Stealth JS مبسّط ────────────────────────────────────────────
+  // نخفي webdriver فقط — أي تعديل إضافي يسبب تناقض fingerprint
+  static const String _stealthJS = r'''
+(function(){
   try {
-    Object.defineProperty(navigator, 'deviceMemory', {
-      get: () => 4,
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => undefined,
       configurable: true
     });
   } catch(e) {}
-
-  // connection
-  try {
-    Object.defineProperty(navigator, 'connection', {
-      get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10, saveData: false }),
-      configurable: true
-    });
-  } catch(e) {}
-
-  // أخفِ chrome object
-  try {
-    if (window.chrome) {
-      window.chrome = undefined;
-    }
-  } catch(e) {}
-
-  // permissions — Cloudflare يفحصها
-  if (navigator.permissions) {
-    const originalQuery = navigator.permissions.query.bind(navigator.permissions);
-    navigator.permissions.query = (parameters) => {
-      if (parameters.name === 'notifications') {
-        return Promise.resolve({ state: 'denied', onchange: null });
-      }
-      return originalQuery(parameters);
-    };
-  }
-
-  // أصلح toString لإخفاء التعديلات
-  const nativeToString = Function.prototype.toString;
-  Function.prototype.toString = function() {
-    if (this === navigator.permissions?.query) {
-      return 'function query() { [native code] }';
-    }
-    return nativeToString.call(this);
-  };
-
 })();
 ''';
 
+  // ─── اكتشاف صفحة CF عبر JS (أدق من title فقط) ──────────────────
+  static const String _cfDetectJS = r'''
+(function(){
+  try { if (typeof window._cf_chl_opt !== 'undefined') return 'challenge'; } catch(e){}
+  var t = (document.title || '').toLowerCase();
+  if (!t) return 'challenge';
+  var w = ['just a moment','cloudflare','checking','please wait',
+           'attention required','one moment','security check','ddos','لحظة'];
+  if (w.some(function(x){ return t.indexOf(x) !== -1; })) return 'challenge';
+  return 'clean';
+})()
+''';
+
   String get _baseDomain {
-    try {
-      return Uri.parse(widget.url).host;
-    } catch (_) {
-      return '';
-    }
+    try { return Uri.parse(widget.url).host; } catch (_) { return ''; }
   }
 
   @override
   void initState() {
     super.initState();
+
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(AppUserAgent.iosSafari)
-      // حقن الـ stealth script قبل أي JS من الصفحة
-      ..addJavaScriptChannel(
-        'FlutterBridge',
-        onMessageReceived: (_) {},
-      )
+      // ✅ Android Chrome UA — متوافق مع fingerprint الـ WebView الفعلي
+      ..setUserAgent(AppUserAgent.androidChrome)
+      ..addJavaScriptChannel('FlutterBridge', onMessageReceived: (_) {})
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) {
           _checkTimer?.cancel();
-          _consecutiveClean = 0;
-          if (mounted) setState(() => _isLoading = true);
-          // حقن الـ stealth JS فور بداية التحميل
+          // لا نعيد _consecutiveClean هنا — فقط في _performCheck عند اكتشاف تحدي فعلي
+          if (mounted) setState(() { _isLoading = true; _isVerifying = false; });
           _controller.runJavaScript(_stealthJS).catchError((_) {});
         },
         onPageFinished: (url) {
           if (mounted) setState(() => _isLoading = false);
-          // حقن مرة ثانية بعد اكتمال التحميل
           _controller.runJavaScript(_stealthJS).catchError((_) {});
-          if (!_solved && !_closed) {
-            _scheduleCheck();
-          }
+          if (!_solved && !_closed) _scheduleCheck();
         },
         onNavigationRequest: (_) => NavigationDecision.navigate,
       ))
       ..loadRequest(Uri.parse(widget.url));
   }
 
+  // ─── جدولة الفحص ────────────────────────────────────────────────
   void _scheduleCheck() {
     _checkTimer?.cancel();
-    _checkTimer = Timer(const Duration(seconds: 2), _performCheck);
+    // 3 ثوانٍ أولى قبل الفحص — Cloudflare يحتاج وقتاً بعد تحميل الصفحة
+    _checkTimer = Timer(const Duration(seconds: 3), _performCheck);
   }
 
   Future<void> _performCheck() async {
     if (_solved || _closed || !mounted) return;
-
     try {
-      final rawTitle = await _controller.runJavaScriptReturningResult(
-        'document.title || ""',
-      );
-      final title = rawTitle.toString()
-          .replaceAll('"', '')
-          .toLowerCase()
-          .trim();
-
-      final isChallenge = _isChallengeTitle(title);
+      final raw = await _controller
+          .runJavaScriptReturningResult(_cfDetectJS);
+      final result = raw.toString().replaceAll('"', '').trim();
+      final isChallenge = result != 'clean';
 
       if (!isChallenge) {
         _consecutiveClean++;
-        if (_consecutiveClean >= 2) {
+        if (mounted) setState(() => _isVerifying = true);
+
+        if (_consecutiveClean >= 3) {
+          // ✅ ثلاثة فحوصات نظيفة متتالية (3×3s = 9s) — نتحقق ونغلق
           _checkTimer?.cancel();
           await _extractAndSolve();
         } else {
-          _checkTimer = Timer(const Duration(seconds: 1), _performCheck);
+          // فحص بعد 3 ثوانٍ إضافية
+          _checkTimer = Timer(const Duration(seconds: 3), _performCheck);
         }
       } else {
+        // ─── اكتُشف تحدي ────────────────────────────────────────
+        // لو كنا في مرحلة التحقق، معناه CF بدأ جولة جديدة
+        if (_isVerifying || _consecutiveClean > 0) {
+          if (mounted) setState(() => _challengeRound++);
+        }
         _consecutiveClean = 0;
-        // لا تعد جدولة — انتظر onPageFinished القادم
+        if (mounted) setState(() => _isVerifying = false);
+        // لا نعيد الجدولة — ننتظر onPageFinished القادم
       }
     } catch (e) {
       debugPrint('CF check: $e');
     }
   }
 
-  bool _isChallengeTitle(String title) {
-    if (title.isEmpty) return true;
-    const challengeWords = [
-      'just a moment', 'cloudflare', 'checking',
-      'please wait', 'attention required', 'لحظة',
-      'one moment', 'security check', 'ddos',
-    ];
-    return challengeWords.any((w) => title.contains(w));
-  }
-
   Future<void> _extractAndSolve() async {
     if (_solved || _closed) return;
+
+    // ✅ انتظار إضافي — Cloudflare يحتاج وقتاً لضبط cf_clearance بعد اكتمال التحدي
+    await Future.delayed(const Duration(seconds: 5));
+    if (_solved || _closed || !mounted) return;
+
+    // تحقق نهائي: هل الصفحة لا تزال نظيفة؟
+    try {
+      final raw = await _controller
+          .runJavaScriptReturningResult(_cfDetectJS);
+      final result = raw.toString().replaceAll('"', '').trim();
+      if (result != 'clean') {
+        // CF لا يزال نشطاً — ارجع للانتظار
+        if (mounted) setState(() { _consecutiveClean = 0; _isVerifying = false; });
+        return;
+      }
+    } catch (_) {}
+
+    // استخرج الكوكيز المتاحة بـ JS (cf_clearance هي HttpOnly — لن تظهر)
+    // لكن cf_clearance موجودة في Android cookie store المشترك
     try {
       final cookieResult = await _controller.runJavaScriptReturningResult(
-        r'(function(){ try{ return document.cookie || ""; }catch(e){ return ""; } })()',
+        r'(function(){ try{ return document.cookie||""; }catch(e){ return ""; } })()',
       );
-      final jsCookies = cookieResult.toString().replaceAll('"', '').trim();
-      if (jsCookies.isNotEmpty && jsCookies != 'null') {
-        await CookieService().saveCookies(jsCookies, _baseDomain);
+      final cookies = cookieResult.toString().replaceAll('"', '').trim();
+      if (cookies.isNotEmpty && cookies != 'null') {
+        await CookieService().saveCookies(cookies, _baseDomain);
       }
     } catch (e) {
       debugPrint('Cookie save: $e');
     }
+
     await _finalize(solved: true);
   }
 
@@ -236,25 +168,47 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
     _closed = true;
     _solved = solved;
     _checkTimer?.cancel();
-
     if (solved) {
       widget.appState.onCloudflareSolved();
     } else {
       widget.appState.onCloudflareDismissed();
     }
-
     if (mounted) Navigator.of(context).pop(solved);
   }
 
-  void _handleClose() {
-    if (_closed) return;
-    _finalize(solved: false);
-  }
+  void _handleClose() { if (!_closed) _finalize(solved: false); }
 
   @override
   void dispose() {
     _checkTimer?.cancel();
     super.dispose();
+  }
+
+  // ─── UI Helpers ─────────────────────────────────────────────────
+
+  String get _titleText {
+    if (_challengeRound > 1) return 'تحقق الأمان — الجولة $_challengeRound';
+    return 'تحقق من الأمان';
+  }
+
+  String get _subtitleText {
+    if (_isLoading)    return 'جارٍ التحميل...';
+    if (_isVerifying)  return '⏳ جارٍ التحقق... لا تغلق النافذة';
+    if (_challengeRound > 1) {
+      return 'جولة جديدة — اضغط على المربع وانتظر ✓';
+    }
+    return 'اضغط على "أنا لست روبوتاً" ثم انتظر';
+  }
+
+  Color get _statusColor {
+    if (_isVerifying) return Colors.green;
+    if (_challengeRound > 1) return Colors.amber[700]!;
+    return Colors.orange;
+  }
+
+  IconData get _statusIcon {
+    if (_isVerifying) return Icons.verified_outlined;
+    return Icons.shield_outlined;
   }
 
   @override
@@ -266,7 +220,9 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
         height: MediaQuery.of(context).size.height * 0.88,
         child: Column(
           children: [
-            _header(),
+            _buildHeader(),
+            // ─── شريط الجولات لو أكثر من جولة واحدة ───────────────
+            if (_challengeRound > 1) _buildRoundsBar(),
             Expanded(
               child: Stack(
                 children: [
@@ -285,63 +241,71 @@ class _CloudflareBypassSheetState extends State<CloudflareBypassSheet> {
     );
   }
 
-  Widget _header() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
+  Widget _buildHeader() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    decoration: BoxDecoration(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      boxShadow: [BoxShadow(
+        color: Colors.black.withOpacity(0.08),
+        blurRadius: 4, offset: const Offset(0, 2),
+      )],
+    ),
+    child: Row(
+      children: [
+        Icon(_statusIcon, size: 20, color: _statusColor),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_titleText,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+              Text(_subtitleText,
+                style: TextStyle(fontSize: 11,
+                  color: _isVerifying ? Colors.green[700] : Colors.grey[500])),
+            ],
+          ),
         ),
-        child: Row(
-          children: [
-            const Icon(Icons.shield_outlined, size: 20, color: Colors.orange),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('تحقق من الأمان',
-                      style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.bold)),
-                  Text(
-                    _isLoading
-                        ? 'جارٍ التحميل...'
-                        : 'اضغط على "أنا لست روبوتاً" ثم انتظر',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                  ),
-                ],
-              ),
+        if (_isLoading || _isVerifying)
+          SizedBox(width: 16, height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: _isVerifying ? Colors.green : null,
+            )),
+        const SizedBox(width: 10),
+        GestureDetector(
+          onTap: _handleClose,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.red.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.red.withOpacity(0.3)),
             ),
-            if (_isLoading)
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            const SizedBox(width: 10),
-            GestureDetector(
-              onTap: _handleClose,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.withOpacity(0.3)),
-                ),
-                child: const Text('إغلاق',
-                    style: TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500)),
-              ),
-            ),
-          ],
+            child: const Text('إغلاق',
+              style: TextStyle(color: Colors.redAccent,
+                fontSize: 13, fontWeight: FontWeight.w500)),
+          ),
         ),
-      );
+      ],
+    ),
+  );
+
+  Widget _buildRoundsBar() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    color: Colors.amber.withOpacity(0.1),
+    child: Row(
+      children: [
+        Icon(Icons.info_outline, size: 14, color: Colors.amber[800]),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            'هذا الموقع يطلب عدة جولات من التحقق — هذا طبيعي، استمر في الحل',
+            style: TextStyle(fontSize: 11, color: Colors.amber[900]),
+          ),
+        ),
+      ],
+    ),
+  );
 }

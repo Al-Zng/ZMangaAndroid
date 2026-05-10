@@ -18,23 +18,35 @@ class HttpService {
     },
   ));
 
-  Future<String> get(String url) async {
-    // حقن كوكيز Cloudflare المحفوظة
-    final cookieHeader = await CookieService().getCookieHeader();
-    final headers = <String, String>{};
-    if (cookieHeader.isNotEmpty) {
-      headers['Cookie'] = cookieHeader;
-    }
+  // ─── كوكيز الجلسة (مُنقولة من WebView بعد حل CF) ─────────────────
+  // هذا يُحاكي iOS: WKWebsiteDataStore.getAllCookies → HTTPCookieStorage
+  // ملاحظة: cf_clearance هي HttpOnly — لن تظهر هنا
+  // لكنها موجودة في WebView cookie store وتُرسل عبر _fetchHTMLViaWebView
+  String _sessionCookies = '';
 
+  void addSessionCookies(String cookies) {
+    if (cookies.isNotEmpty && cookies != 'null') {
+      _sessionCookies = cookies;
+    }
+  }
+
+  void clearSessionCookies() {
+    _sessionCookies = '';
+  }
+
+  Future<String> get(String url) async {
+    final cookieHeader = await _buildCookieHeader(url);
     final response = await _dio.get<String>(
       url,
-      options: Options(headers: headers),
+      options: Options(
+        headers: cookieHeader.isNotEmpty ? {'Cookie': cookieHeader} : {},
+      ),
     );
     return response.data ?? '';
   }
 
   Future<String> post(String url, String body, {Map<String, String>? headers}) async {
-    final cookieHeader = await CookieService().getCookieHeader();
+    final cookieHeader = await _buildCookieHeader(url);
     final mergedHeaders = <String, dynamic>{
       'Content-Type': 'application/x-www-form-urlencoded',
       'X-Requested-With': 'XMLHttpRequest',
@@ -42,12 +54,28 @@ class HttpService {
       if (cookieHeader.isNotEmpty) 'Cookie': cookieHeader,
       ...?headers,
     };
-
     final response = await _dio.post<String>(
       url,
       data: body,
       options: Options(headers: mergedHeaders),
     );
     return response.data ?? '';
+  }
+
+  // ─── دمج كوكيز CookieService + session cookies ────────────────────
+  Future<String> _buildCookieHeader(String url) async {
+    final saved = await CookieService().getCookieHeader();
+    final parts = <String>[];
+    if (saved.isNotEmpty) parts.add(saved);
+    if (_sessionCookies.isNotEmpty) {
+      // لا تُكرر الكوكيز الموجودة
+      for (final part in _sessionCookies.split(';')) {
+        final name = part.split('=').first.trim();
+        if (name.isNotEmpty && !saved.contains('$name=')) {
+          parts.add(part.trim());
+        }
+      }
+    }
+    return parts.join('; ');
   }
 }

@@ -20,22 +20,83 @@ class MangaService {
 
   WebViewController? _chapterWebViewController;
 
+  // ─── Mutex لـ _fetchHTMLViaWebView ───────────────────────────────
+  // يمنع استخدام نفس الـ WebView بشكل متزامن (race condition)
+  // السبب: setNavigationDelegate يستبدل الـ delegate السابق فيضيع الـ Completer الأول
+  bool _wvBusy = false;
+  // ✅ FIX: كل عنصر في القائمة يحمل الـ completer + الـ URL المطلوب
+  final _wvQueue = <({Completer<String> completer, String url})>[];
+
   WebViewController _getChapterWebViewController() {
     if (_chapterWebViewController != null) return _chapterWebViewController!;
     _chapterWebViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(AppUserAgent.iosSafari);
+      // ✅ نفس UA كالـ bypass sheet للحصول على نفس الـ cf_clearance cookie
+      ..setUserAgent(AppUserAgent.androidChrome);
     return _chapterWebViewController!;
   }
 
   // MARK: - Core fetchHTML مع Dio + iOS UA + Cookie Injection
+
+  // ─── وقت آخر حل ناجح لـ Cloudflare ─────────────────────────────
+  // نستخدمه لتجنب إعادة الطلب عبر Dio (الذي ليس عنده cf_clearance)
+  // بعد الحل مباشرة، نوجّه كل الطلبات عبر WebView لمدة 5 دقائق
+  DateTime? _lastCfSolveTime;
+
+  bool get _cfSolvedRecently {
+    if (_lastCfSolveTime == null) return false;
+    return DateTime.now().difference(_lastCfSolveTime!) <
+        const Duration(minutes: 5);
+  }
+
+  /// يُستدعى من AppState.onCloudflareSolved() قبل أي notifyListeners()
+  /// ضروري: يجب أن يُعيَّن قبل أن يُعيد أي widget بناء نفسه ويستدعي fetchHTML
+  void markCfSolved() {
+    _lastCfSolveTime = DateTime.now();
+    // نقل كوكيز WebView إلى Dio (مثل iOS: WKWebsiteDataStore → URLSession)
+    // ملاحظة: cf_clearance هي HttpOnly — لا تظهر في document.cookie
+    // لكن WebView الخفي يمتلكها في cookie store المشترك ويُرسلها تلقائياً
+    _bridgeWebViewCookiesToDio();
+  }
+
+  // ─── نقل الكوكيز من WebView إلى Dio ───────────────────────────────
+  // يُحاكي iOS: WKWebsiteDataStore.getAllCookies → HTTPCookieStorage
+  // cf_clearance هي HttpOnly — لا تنتقل هنا لكن WebView يُرسلها تلقائياً
+  Future<void> _bridgeWebViewCookiesToDio() async {
+    try {
+      final wv = _getChapterWebViewController();
+      final raw = await wv.runJavaScriptReturningResult(
+        '(function(){ try{ return document.cookie||""; }catch(e){ return ""; } })()',
+      );
+      final cookies = raw.toString().replaceAll('"', '').trim();
+      if (cookies.isNotEmpty && cookies != 'null') {
+        _http.addSessionCookies(cookies);
+      }
+    } catch (e) {
+      debugPrint('Cookie bridge: $e');
+    }
+  }
+
   Future<String> fetchHTML(String urlString, {int retryCount = 0}) async {
     try {
+      // ✅ إذا حُل الـ CF مؤخراً، اذهب مباشرة للـ WebView
+      // Dio ليس عنده cf_clearance (HttpOnly)، أما WebView فعنده من cookie store المشترك
+      if (_cfSolvedRecently && retryCount == 0) {
+        try {
+          final wvHtml = await _fetchHTMLViaWebView(urlString);
+          if (wvHtml.isNotEmpty && !_cf.isCloudflareBlock(200, wvHtml)) {
+            return wvHtml;
+          }
+        } catch (_) {}
+        // لو WebView فشل، أكمل بـ Dio كالمعتاد
+      }
+
       final html = await _http.get(urlString);
 
       final isBlock = _cf.isCloudflareBlock(200, html);
       if (isBlock) {
-        if (retryCount >= 2) {
+        // ✅ سقف الـ retry = 1 (مرة واحدة فقط) لمنع الحلقة اللانهائية
+        if (retryCount >= 1) {
           throw Exception('Cloudflare challenge could not be solved');
         }
 
@@ -44,9 +105,17 @@ class MangaService {
 
         final solved = await appState.triggerCloudflare(urlString);
         if (solved) {
-          return fetchHTML(urlString, retryCount: retryCount + 1);
+          _lastCfSolveTime = DateTime.now();
+          try {
+            final wvHtml = await _fetchHTMLViaWebView(urlString);
+            if (wvHtml.isNotEmpty && !_cf.isCloudflareBlock(200, wvHtml)) {
+              return wvHtml;
+            }
+          } catch (_) {}
+          // ✅ لا نعيد استدعاء fetchHTML هنا — يسبب حلقة لانهائية
+          // إذا فشل WebView بعد الحل، نرمي exception بدل إعادة trigger
+          throw Exception('Content unavailable after Cloudflare bypass');
         } else {
-          // المستخدم أغلق الـ sheet بدون حل — ارجع فارغ بدل crash
           return '';
         }
       }
@@ -57,14 +126,22 @@ class MangaService {
       final body = e.response?.data?.toString() ?? '';
 
       if (_cf.isCloudflareBlock(statusCode, body)) {
-        if (retryCount >= 2) {
+        if (retryCount >= 1) {
           throw Exception('Cloudflare challenge could not be solved');
         }
         final appState = AppState.current;
         if (appState == null) return '';
         final solved = await appState.triggerCloudflare(urlString);
         if (solved) {
-          return fetchHTML(urlString, retryCount: retryCount + 1);
+          _lastCfSolveTime = DateTime.now();
+          try {
+            final wvHtml = await _fetchHTMLViaWebView(urlString);
+            if (wvHtml.isNotEmpty && !_cf.isCloudflareBlock(200, wvHtml)) {
+              return wvHtml;
+            }
+          } catch (_) {}
+          // ✅ لا نعيد استدعاء fetchHTML — نرمي exception لمنع الحلقة
+          throw Exception('Content unavailable after Cloudflare bypass');
         }
         return '';
       }
@@ -76,20 +153,78 @@ class MangaService {
     }
   }
 
-  // MARK: - fetchHTMLViaWebView (iOS UA)
+  // MARK: - fetchHTMLViaWebView (Android Chrome UA)
+  // مع Mutex لمنع الاستدعاء المتزامن على نفس الـ WebView
   Future<String> _fetchHTMLViaWebView(String urlString) async {
+    // لو الـ WebView مشغول، انتظر حتى يفرغ (حد أقصى 65 ثانية)
+    if (_wvBusy) {
+      final waiter = Completer<String>();
+      // ✅ FIX: نحفظ الـ URL مع الـ completer حتى لا نفقده في القائمة
+      _wvQueue.add((completer: waiter, url: urlString));
+      try {
+        return await waiter.future.timeout(const Duration(seconds: 65));
+      } catch (_) {
+        _wvQueue.removeWhere((e) => e.completer == waiter);
+        return '';
+      }
+    }
+    _wvBusy = true;
+    try {
+      return await _doFetchHTMLViaWebView(urlString);
+    } finally {
+      _wvBusy = false;
+      // أطلق أول منتظر في القائمة بـ URL الصحيح
+      if (_wvQueue.isNotEmpty) {
+        final next = _wvQueue.removeAt(0);
+        if (!next.completer.isCompleted) {
+          // ✅ FIX: نستخدم next.url بدل urlString
+          _fetchHTMLViaWebView(next.url).then(
+            (r) { if (!next.completer.isCompleted) next.completer.complete(r); },
+            onError: (e) { if (!next.completer.isCompleted) next.completer.completeError(e); },
+          );
+        }
+      }
+    }
+  }
+
+  Future<String> _doFetchHTMLViaWebView(String urlString) async {
     final controller = _getChapterWebViewController();
     final completer = Completer<String>();
 
     controller.setNavigationDelegate(NavigationDelegate(
       onPageFinished: (url) async {
-        await Future.delayed(const Duration(milliseconds: 500));
-        final html = await controller.runJavaScriptReturningResult(
-              'document.documentElement.outerHTML',
-            ) as String? ??
-            '';
-        if (!completer.isCompleted) {
-          completer.complete(html);
+        // حقن minimal stealth JS
+        controller.runJavaScript(
+          '(function(){ try { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); } catch(e){} })();',
+        ).catchError((_) {});
+        // انتظر 3 ثوانٍ لإعطاء Cloudflare وقتاً كافياً لضبط cf_clearance
+        await Future.delayed(const Duration(seconds: 3));
+
+        // ✅ FIX: runJavaScriptReturningResult يُرجع نتيجة JSON مُشفَّرة
+        // مثال: إذا كانت النتيجة string فتصير `"<html>..."` بعلامات اقتباس خارجية
+        // وكل " داخلية تصير \" — ما يكسر الريجكس كلياً
+        // الحل: نفك تشفير JSON قبل الاستخدام
+        String _decodeJsHtml(dynamic raw) {
+          final s = raw?.toString() ?? '';
+          if (s.isEmpty) return '';
+          try { return jsonDecode(s) as String? ?? s; } catch (_) { return s; }
+        }
+
+        final raw1 = await controller.runJavaScriptReturningResult(
+          'document.documentElement.outerHTML',
+        );
+        final html = _decodeJsHtml(raw1);
+
+        if (_cf.isCloudflareBlock(200, html)) {
+          // لا تزال صفحة تحدي — انتظر أكثر
+          await Future.delayed(const Duration(seconds: 4));
+          final raw2 = await controller.runJavaScriptReturningResult(
+            'document.documentElement.outerHTML',
+          );
+          final html2 = _decodeJsHtml(raw2);
+          if (!completer.isCompleted) completer.complete(html2);
+        } else {
+          if (!completer.isCompleted) completer.complete(html);
         }
       },
       onWebResourceError: (error) {
@@ -100,7 +235,7 @@ class MangaService {
     ));
     controller.loadRequest(Uri.parse(urlString));
 
-    return completer.future.timeout(const Duration(seconds: 30));
+    return completer.future.timeout(const Duration(seconds: 60));
   }
 
   // MARK: - Public API

@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:convert';
 import '../models/models.dart';
+import '../services/manga_service.dart';
 
 class AppState extends ChangeNotifier {
   static AppState? current;
@@ -255,18 +256,27 @@ class AppState extends ChangeNotifier {
   /// يُستدعى من CloudflareBypassSheet عند النجاح
   void onCloudflareSolved() {
     _showCloudflareSheet = false;
-    // لا تُصفّر _cloudflareURL حتى يستطيع MangaService إعادة الطلب
-    notifyListeners();
+
+    // ✅ CRITICAL: markCfSolved أولاً — قبل أي notifyListeners()
+    // يضمن أن أي fetchHTML جديد يستخدم WebView (الذي عنده cf_clearance)
+    MangaService().markCfSolved();
+
+    notifyListeners(); // يُغلق الـ sheet فقط
 
     // أبلغ كل المنتظرين بالنجاح
+    // هم سيُكملون retry بأنفسهم عبر _fetchHTMLViaWebView
     for (final c in _cfWaiters) {
       if (!c.isCompleted) c.complete(true);
     }
     _cfWaiters.clear();
 
-    // أطلق reload للـ screens
-    _reloadTrigger++;
-    notifyListeners();
+    // ❌ لا نستدعي _reloadTrigger++ هنا
+    // السبب: _reloadTrigger يستدعي _loadLatest(reset: true) في HomeScreen
+    // هذا يُلغي الـ latestManga ويبدأ fetchHTML جديد على نفس الـ WebView
+    // بينما الـ fetchHTML القديم (المنتظر على Completer) ينتهي ويستخدم نفس الـ WebView
+    // النتيجة: race condition → الأول يخسر → timeout 60 ثانية → صفحة فارغة
+    //
+    // الحل الصحيح: نترك الـ fetchHTML المنتظرة تُكمل retry بأنفسها ← تُحدّث الـ UI تلقائياً
   }
 
   /// يُستدعى عند الإغلاق بالإجبار (بدون حل)
