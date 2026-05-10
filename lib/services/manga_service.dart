@@ -46,7 +46,7 @@ class MangaService {
   bool get _cfSolvedRecently {
     if (_lastCfSolveTime == null) return false;
     return DateTime.now().difference(_lastCfSolveTime!) <
-        const Duration(minutes: 5);
+        const Duration(minutes: 2);
   }
 
   /// يُستدعى من AppState.onCloudflareSolved() قبل أي notifyListeners()
@@ -162,7 +162,7 @@ class MangaService {
       // ✅ FIX: نحفظ الـ URL مع الـ completer حتى لا نفقده في القائمة
       _wvQueue.add((completer: waiter, url: urlString));
       try {
-        return await waiter.future.timeout(const Duration(seconds: 65));
+        return await waiter.future.timeout(const Duration(seconds: 25));
       } catch (_) {
         _wvQueue.removeWhere((e) => e.completer == waiter);
         return '';
@@ -198,7 +198,7 @@ class MangaService {
           '(function(){ try { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); } catch(e){} })();',
         ).catchError((_) {});
         // انتظر 3 ثوانٍ لإعطاء Cloudflare وقتاً كافياً لضبط cf_clearance
-        await Future.delayed(const Duration(seconds: 3));
+        await Future.delayed(const Duration(milliseconds: 1500));
 
         // ✅ FIX: runJavaScriptReturningResult يُرجع نتيجة JSON مُشفَّرة
         // مثال: إذا كانت النتيجة string فتصير `"<html>..."` بعلامات اقتباس خارجية
@@ -217,7 +217,7 @@ class MangaService {
 
         if (_cf.isCloudflareBlock(200, html)) {
           // لا تزال صفحة تحدي — انتظر أكثر
-          await Future.delayed(const Duration(seconds: 4));
+          await Future.delayed(const Duration(seconds: 2));
           final raw2 = await controller.runJavaScriptReturningResult(
             'document.documentElement.outerHTML',
           );
@@ -235,7 +235,7 @@ class MangaService {
     ));
     controller.loadRequest(Uri.parse(urlString));
 
-    return completer.future.timeout(const Duration(seconds: 60));
+    return completer.future.timeout(const Duration(seconds: 30));
   }
 
   // MARK: - Public API

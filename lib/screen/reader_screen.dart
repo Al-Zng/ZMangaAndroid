@@ -46,13 +46,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late String currentChapterSlug;
   int currentPage = 0;
 
-  bool autoLoadNextChapter = true;
+  // ✅ FIX: وضع الأجهزة الضعيفة — يُستدعى من AppState
+  bool get _lowEnd => context.read<AppState>().lowEndMode;
+  bool get _autoLoad => context.read<AppState>().autoLoadNextChapter;
+
+  // ✅ للريدر البسيط (وضع الأجهزة الضعيفة)
+  final _scrollController = ScrollController();
+  late Chapter _currentChapter;
+  bool _loadingPrevNext = false;
 
   @override
   void initState() {
     super.initState();
     currentChapterSlug = widget.chapter.slug;
+    _currentChapter = widget.chapter;
     _loadInitial();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadInitial() async {
@@ -73,12 +87,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
         } else if (widget.isOfflineMode) {
           throw Exception('Not available offline');
         } else {
-          urls = await _service.fetchChapterPages(
-              widget.manga.slug, widget.chapter.slug);
+          // ✅ FIX: timeout 45 ثانية لمنع الـ loading اللا متناهي
+          urls = await _service
+              .fetchChapterPages(widget.manga.slug, widget.chapter.slug)
+              .timeout(const Duration(seconds: 45),
+                  onTimeout: () =>
+                      throw Exception('Loading timeout — tap Retry'));
         }
       }
 
-      // إصلاح الشاشة السوداء: تأكد وجود صفحات
       if (urls.isEmpty) {
         throw Exception('No chapter images found');
       }
@@ -95,7 +112,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         currentPage = widget.initialPage.clamp(0, allPages.length - 1);
       });
     } catch (e) {
-      // إصلاح الشاشة السوداء: دائماً أظهر error UI
       setState(() {
         error = e.toString().replaceAll('Exception: ', '');
         isLoading = false;
@@ -104,9 +120,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  // ─── تحميل الفصل التالي (وضع الأجهزة العادية فقط) ─────────────
   Future<void> _loadNextChapter() async {
     if (loadingNext || chapterBoundaries.isEmpty) return;
-    if (!autoLoadNextChapter) return;
+    if (!_autoLoad) return;
     final lastLoaded = chapterBoundaries.last.slug;
     final idx =
         widget.allChapters.indexWhere((c) => c.slug == lastLoaded);
@@ -123,7 +140,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         setState(() => loadingNext = false);
         return;
       } else {
-        urls = await _service.fetchChapterPages(widget.manga.slug, next.slug);
+        urls = await _service
+            .fetchChapterPages(widget.manga.slug, next.slug)
+            .timeout(const Duration(seconds: 30));
       }
       if (urls.isEmpty) {
         setState(() => loadingNext = false);
@@ -145,7 +164,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (currentPage == idx) return;
     setState(() => currentPage = idx);
     _saveProgress(idx);
-    if (idx >= allPages.length - 5) _loadNextChapter();
+    if (!_lowEnd && idx >= allPages.length - 5) _loadNextChapter();
   }
 
   void _saveProgress(int pageIdx) {
@@ -188,12 +207,62 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return widget.chapter.number;
   }
 
+  // ─── وضع الأجهزة الضعيفة: تنقل بين الفصول ──────────────────────
+  int get _currentChapterIndex =>
+      widget.allChapters.indexWhere((c) => c.slug == _currentChapter.slug);
+
+  bool get _hasPrevChapter => _currentChapterIndex > 0;
+  bool get _hasNextChapter =>
+      _currentChapterIndex >= 0 &&
+      _currentChapterIndex < widget.allChapters.length - 1;
+
+  Future<void> _goToChapter(Chapter ch) async {
+    setState(() => _loadingPrevNext = true);
+    _currentChapter = ch;
+    currentChapterSlug = ch.slug;
+    try {
+      List<String> urls;
+      final localPages = _dm.getPages(widget.manga.slug, ch.slug);
+      if (localPages != null) {
+        urls = localPages;
+      } else {
+        urls = await _service
+            .fetchChapterPages(widget.manga.slug, ch.slug)
+            .timeout(const Duration(seconds: 40),
+                onTimeout: () => throw Exception('Loading timeout'));
+      }
+      setState(() {
+        allPages = urls.map((u) => _PageEntry(ch.slug, u)).toList();
+        chapterBoundaries = [_ChapterBoundary(ch.slug, 0)];
+        loadedChapters = {ch.slug};
+        currentPage = 0;
+        totalPages = urls.length;
+        _loadingPrevNext = false;
+      });
+      // scroll للأعلى
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
+    } catch (e) {
+      setState(() => _loadingPrevNext = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.toString().replaceAll('Exception: ', '')),
+              backgroundColor: AppTheme.danger),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final lowEnd = context.watch<AppState>().lowEndMode;
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
+          // ─── المحتوى الرئيسي ────────────────────────────────────
           if (isLoading && allPages.isEmpty)
             _loadingView()
           else if (error != null && allPages.isEmpty)
@@ -202,19 +271,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
             const Center(
                 child: Text('No pages',
                     style: TextStyle(color: Colors.white54)))
+          else if (lowEnd)
+            // ✅ FIX: وضع الأجهزة الضعيفة — ListView بسيط بدون PageView
+            _lowEndReader()
           else
+            // وضع الأجهزة العادية — PageView كالمعتاد
             GestureDetector(
               onTap: _toggleUI,
               child: PageView.builder(
                 scrollDirection: Axis.vertical,
                 itemCount: allPages.length + (loadingNext ? 1 : 0),
-                controller:
-                    PageController(initialPage: widget.initialPage),
+                controller: PageController(initialPage: widget.initialPage),
                 onPageChanged: _updateCurrentPage,
                 itemBuilder: (_, idx) {
                   if (idx < allPages.length) {
-                    if (chapterBoundaries
-                            .any((b) => b.startIndex == idx) &&
+                    if (chapterBoundaries.any((b) => b.startIndex == idx) &&
                         idx > 0) {
                       final b = chapterBoundaries
                           .firstWhere((b) => b.startIndex == idx);
@@ -233,42 +304,165 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     return _pageItem(idx);
                   }
                   return const Center(
-                      child: CircularProgressIndicator(
-                          color: AppTheme.accent));
+                      child: CircularProgressIndicator(color: AppTheme.accent));
                 },
               ),
             ),
 
-          // زر الإغلاق
+          // ─── الشريط العلوي ──────────────────────────────────────
+          if (showUI && !isLoading && allPages.isNotEmpty) _topBar(),
+
+          // ✅ FIX: زر الإغلاق يجب أن يكون بعد _topBar() في Stack
+          //    حتى يُرسم فوقه ولا يُحجب به
           SafeArea(
             child: Align(
               alignment: Alignment.topLeft,
               child: Padding(
                 padding: const EdgeInsets.only(top: 8, left: 8),
-                child: IconButton(
-                  icon: const Icon(Icons.close,
-                      color: Colors.white, size: 28),
-                  onPressed: () => Navigator.pop(context),
-                ),
+                child: _closeButton(),
               ),
             ),
           ),
 
-          // الشريط العلوي
-          if (showUI && !isLoading && allPages.isNotEmpty) _topBar(),
-
-          // الشريط السفلي
+          // ─── الشريط السفلي ──────────────────────────────────────
           if (showUI && !isLoading && allPages.isNotEmpty)
             Positioned(
                 bottom: 0,
                 left: 0,
                 right: 0,
-                child: _bottomBar()),
+                child: lowEnd ? _lowEndBottomBar() : _bottomBar()),
         ],
       ),
     );
   }
 
+  // ✅ FIX: زر الإغلاق مع خلفية معتمة للوضوح
+  Widget _closeButton() => Material(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => Navigator.pop(context),
+          child: const Padding(
+            padding: EdgeInsets.all(8),
+            child: Icon(Icons.close, color: Colors.white, size: 24),
+          ),
+        ),
+      );
+
+  // ─── وضع الأجهزة الضعيفة ─────────────────────────────────────────
+  Widget _lowEndReader() {
+    if (_loadingPrevNext) {
+      return const Center(
+          child: CircularProgressIndicator(color: AppTheme.accent));
+    }
+    return GestureDetector(
+      onTap: _toggleUI,
+      child: ListView.builder(
+        controller: _scrollController,
+        // ✅ cacheExtent صغير لتوفير الذاكرة
+        cacheExtent: 200,
+        addAutomaticKeepAlives: false,
+        addRepaintBoundaries: false,
+        itemCount: allPages.length,
+        itemBuilder: (_, idx) {
+          _updateCurrentPage(idx);
+          return CachedMangaImage(
+              url: allPages[idx].url, fit: BoxFit.fitWidth);
+        },
+      ),
+    );
+  }
+
+  Widget _lowEndBottomBar() => Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+              colors: [Colors.transparent, Colors.black87],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter),
+        ),
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).padding.bottom + 8,
+            top: 12,
+            left: 16,
+            right: 16),
+        child: Row(
+          children: [
+            // ─── الفصل السابق
+            _navButton(
+              icon: Icons.skip_previous,
+              label: 'Previous',
+              enabled: _hasPrevChapter && !_loadingPrevNext,
+              onTap: _hasPrevChapter
+                  ? () => _goToChapter(
+                      widget.allChapters[_currentChapterIndex - 1])
+                  : null,
+            ),
+            const Spacer(),
+            // ─── رقم الفصل الحالي
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Ch. ${_currentChapter.number}',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14),
+                ),
+                Text(
+                  '${currentPage + 1} / ${allPages.length}',
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 12),
+                ),
+              ],
+            ),
+            const Spacer(),
+            // ─── الفصل التالي
+            _navButton(
+              icon: Icons.skip_next,
+              label: 'Next',
+              enabled: _hasNextChapter && !_loadingPrevNext,
+              onTap: _hasNextChapter
+                  ? () => _goToChapter(
+                      widget.allChapters[_currentChapterIndex + 1])
+                  : null,
+            ),
+          ],
+        ),
+      );
+
+  Widget _navButton({
+    required IconData icon,
+    required String label,
+    required bool enabled,
+    VoidCallback? onTap,
+  }) =>
+      GestureDetector(
+        onTap: enabled ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+              color:
+                  enabled ? AppTheme.accent : Colors.white12,
+              borderRadius: BorderRadius.circular(20)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon,
+                  color: enabled ? Colors.white : Colors.white30, size: 18),
+              const SizedBox(width: 4),
+              Text(label,
+                  style: TextStyle(
+                      color: enabled ? Colors.white : Colors.white30,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      );
+
+  // ─── UI المشترك ───────────────────────────────────────────────────
   Widget _loadingView() => Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -281,7 +475,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
               const SizedBox(height: 8),
               Text('$loadedPagesCount / $totalPages pages',
                   style: const TextStyle(color: AppTheme.textSecondary)),
-            ],
+            ] else
+              const Text('Loading chapter...',
+                  style: TextStyle(color: Colors.white54, fontSize: 13)),
           ],
         ),
       );
@@ -292,12 +488,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.warning_amber,
-                  color: AppTheme.danger, size: 48),
+              const Icon(Icons.warning_amber, color: AppTheme.danger, size: 48),
               const SizedBox(height: 16),
               Text(
                 error ?? 'Failed to load chapter',
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                style:
+                    const TextStyle(color: Colors.white70, fontSize: 14),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
@@ -327,15 +523,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Widget _chapterSeparator(String number) => Container(
         padding: const EdgeInsets.symmetric(vertical: 20),
         child: Row(children: [
-          Expanded(
-              child: Container(height: 1, color: Colors.white12)),
+          Expanded(child: Container(height: 1, color: Colors.white12)),
           Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
                 color: AppTheme.accent.withOpacity(0.1),
-                border: Border.all(
-                    color: AppTheme.accent.withOpacity(0.3)),
+                border: Border.all(color: AppTheme.accent.withOpacity(0.3)),
                 borderRadius: BorderRadius.circular(20)),
             child: Text('Chapter $number',
                 style: const TextStyle(
@@ -343,8 +536,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     fontSize: 12,
                     fontWeight: FontWeight.w600)),
           ),
-          Expanded(
-              child: Container(height: 1, color: Colors.white12)),
+          Expanded(child: Container(height: 1, color: Colors.white12)),
         ]),
       );
 
@@ -355,7 +547,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         child: Container(
           padding: EdgeInsets.only(
               top: MediaQuery.of(context).padding.top + 8,
-              left: 48,
+              left: 52, // ✅ مسافة للزر X (48px) + padding
               right: 16,
               bottom: 14),
           decoration: const BoxDecoration(
@@ -379,8 +571,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ]),
             ),
             Text('${currentPage + 1} / ${allPages.length}',
-                style: const TextStyle(
-                    color: Colors.white70, fontSize: 12)),
+                style:
+                    const TextStyle(color: Colors.white70, fontSize: 12)),
           ]),
         ),
       );
@@ -391,8 +583,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           Center(
             child: Container(
               margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                   color: Colors.black54,
                   borderRadius: BorderRadius.circular(20)),
@@ -408,8 +599,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ? (currentPage + 1) / allPages.length
                   : 0,
               backgroundColor: Colors.white12,
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                  AppTheme.accent),
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(AppTheme.accent),
             ),
           ),
           const SizedBox(height: 20),

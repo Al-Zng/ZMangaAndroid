@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/models.dart';
@@ -22,6 +23,8 @@ class _SearchScreenState extends State<SearchScreen>
   bool hasMore = true;
   bool loadingMore = false;
   String? selectedGenre;
+  Timer? _debounce;        // ✅ FIX: debounce للبحث التلقائي
+  bool _hasSearched = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -33,6 +36,7 @@ class _SearchScreenState extends State<SearchScreen>
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -46,6 +50,7 @@ class _SearchScreenState extends State<SearchScreen>
       setState(() {
         results = [];
         isLoading = true;
+        _hasSearched = false;
       });
     }
     try {
@@ -64,10 +69,14 @@ class _SearchScreenState extends State<SearchScreen>
         }
         hasMore = items.isNotEmpty;
         isLoading = false;
+        _hasSearched = true;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => isLoading = false);
+      setState(() {
+        isLoading = false;
+        _hasSearched = true;
+      });
     }
   }
 
@@ -77,6 +86,22 @@ class _SearchScreenState extends State<SearchScreen>
     page++;
     _search(reset: false).then((_) {
       if (mounted) setState(() => loadingMore = false);
+    });
+  }
+
+  // ✅ FIX: debounce 500ms — مطابق لنسخة iOS التي تستخدم 400ms
+  void _onQueryChanged(String val) {
+    setState(() {}); // لتحديث زر الإلغاء
+    _debounce?.cancel();
+    if (val.trim().isEmpty) {
+      setState(() {
+        results = [];
+        _hasSearched = false;
+      });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) _search();
     });
   }
 
@@ -97,11 +122,15 @@ class _SearchScreenState extends State<SearchScreen>
                   ? const Center(
                       child: CircularProgressIndicator(
                           color: AppTheme.accent))
-                  : results.isEmpty && _controller.text.isNotEmpty
+                  : results.isEmpty && _hasSearched && _controller.text.isNotEmpty
                       ? _emptyState()
-                      : results.isEmpty
+                      : results.isEmpty && selectedGenre == null && _controller.text.isEmpty
                           ? _browsePrompt()
-                          : _resultsGrid(),
+                          : results.isEmpty && isLoading
+                              ? const Center(child: CircularProgressIndicator(color: AppTheme.accent))
+                              : results.isEmpty && selectedGenre != null && !isLoading
+                                  ? _emptyState()
+                                  : _resultsGrid(),
             ),
           ],
         ),
@@ -125,7 +154,11 @@ class _SearchScreenState extends State<SearchScreen>
                         color: AppTheme.textTertiary),
                     onPressed: () {
                       _controller.clear();
-                      setState(() => results = []);
+                      _debounce?.cancel();
+                      setState(() {
+                        results = [];
+                        _hasSearched = false;
+                      });
                     },
                   )
                 : null,
@@ -142,8 +175,11 @@ class _SearchScreenState extends State<SearchScreen>
                   const BorderSide(color: AppTheme.border),
             ),
           ),
-          onChanged: (_) => setState(() {}),
-          onSubmitted: (_) => _search(),
+          onChanged: _onQueryChanged,          // ✅ FIX: auto-search مع debounce
+          onSubmitted: (_) {
+            _debounce?.cancel();
+            _search();
+          },
         ),
       );
 
@@ -157,18 +193,24 @@ class _SearchScreenState extends State<SearchScreen>
             _pill(
               text: 'All',
               selected: selectedGenre == null,
-              onTap: () => setState(() {
-                selectedGenre = null;
-                results = [];
-              }),
+              onTap: () {
+                _debounce?.cancel();
+                setState(() {
+                  selectedGenre = null;
+                  results = [];
+                  _hasSearched = false;
+                });
+              },
             ),
             ...genres.map((g) => _pill(
                   text: g,
                   selected: selectedGenre == g,
                   onTap: () {
+                    _debounce?.cancel();
                     setState(() {
                       selectedGenre = g;
                       results = [];
+                      _controller.clear();
                     });
                     _search();
                   },
@@ -267,12 +309,30 @@ class _SearchScreenState extends State<SearchScreen>
       );
 
   Widget _emptyState() => Center(
-        child: Text('No results for "${_controller.text}"',
-            style: const TextStyle(color: AppTheme.textSecondary)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search_off, size: 48, color: AppTheme.textTertiary),
+            const SizedBox(height: 12),
+            Text(
+              selectedGenre != null
+                  ? 'No results for "$selectedGenre"'
+                  : 'No results for "${_controller.text}"',
+              style: const TextStyle(color: AppTheme.textSecondary),
+            ),
+          ],
+        ),
       );
 
   Widget _browsePrompt() => const Center(
-        child: Text('Search or browse by genre',
-            style: TextStyle(color: AppTheme.textSecondary)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.manage_search, size: 48, color: AppTheme.textTertiary),
+            SizedBox(height: 12),
+            Text('Search or browse by genre',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ],
+        ),
       );
 }

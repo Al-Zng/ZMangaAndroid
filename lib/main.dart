@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 import 'utils/network_monitor.dart';
+import 'services/download_manager.dart';
 import 'screen/main_shell.dart';
 
 void main() {
@@ -11,6 +12,8 @@ void main() {
       providers: [
         ChangeNotifierProvider(create: (_) => AppState()),
         ChangeNotifierProvider(create: (_) => NetworkMonitor.shared),
+        // ✅ FIX: DownloadManager مُدرج كـ ChangeNotifier لتحديث الواجهة تلقائياً
+        ChangeNotifierProvider.value(value: DownloadManager.shared),
       ],
       child: const ZMangaApp(),
     ),

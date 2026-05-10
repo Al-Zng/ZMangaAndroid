@@ -15,6 +15,23 @@ class DownloadsScreen extends StatefulWidget {
 class _DownloadsScreenState extends State<DownloadsScreen> {
   final DownloadManager dm = DownloadManager.shared;
 
+  @override
+  void initState() {
+    super.initState();
+    // ✅ FIX: نستمع لتغييرات DownloadManager ونُعيد بناء الشاشة تلقائياً
+    dm.addListener(_onDownloadChanged);
+  }
+
+  void _onDownloadChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    dm.removeListener(_onDownloadChanged);
+    super.dispose();
+  }
+
   List<DownloadedMangaGroup> get downloadedMangas {
     final grouped = dm.downloads.values
         .fold<Map<String, List<DownloadedChapter>>>({}, (map, chapter) {
@@ -69,15 +86,15 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           if (dm.downloads.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_sweep, color: AppTheme.danger),
-              onPressed: () => dm.removeAllDownloads(),
+              onPressed: () => _confirmDeleteAll(context),
             ),
         ],
       ),
       body: completed.isEmpty && downloading.isEmpty
-          ? Center(
+          ? const Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
+                children: [
                   Icon(Icons.download, size: 48,
                       color: AppTheme.textTertiary),
                   SizedBox(height: 12),
@@ -90,39 +107,48 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               children: [
                 if (downloading.isNotEmpty) ...[
                   Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Text('DOWNLOADING',
-                        style: TextStyle(
+                        style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
-                            color: AppTheme.textSecondary)),
+                            color: AppTheme.textSecondary,
+                            letterSpacing: 1.5)),
                   ),
                   ...downloading.map((key) {
                     final progress = dm.activeDownloads[key] ?? 0;
                     final parts = key.split('_');
-                    final chapter = DownloadedChapter(
-                      mangaSlug: parts[0],
-                      chapterSlug: parts[1],
-                      chapterNumber: '...',
-                      mangaTitle: 'Loading...',
-                      mangaCover: '',
-                      pages: [],
-                      downloadedAt: DateTime.now(),
-                    );
+                    // ✅ FIX: تحاول الحصول على معلومات أفضل من _downloads إن وُجدت
+                    final knownChapter = dm.downloads[key];
+                    final mangaTitle = knownChapter?.mangaTitle ?? parts.first;
+                    final chNum = knownChapter?.chapterNumber ?? '...';
                     return ListTile(
-                      leading: const SizedBox(
-                          width: 50,
-                          height: 70,
-                          child: Icon(Icons.downloading,
-                              color: AppTheme.accent)),
-                      title: Text('Ch. ${chapter.chapterNumber}',
-                          style: const TextStyle(
-                              color: AppTheme.textPrimary)),
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: knownChapter != null
+                            ? CachedMangaImage(
+                                url: knownChapter.mangaCover,
+                                width: 50,
+                                height: 70)
+                            : const SizedBox(
+                                width: 50,
+                                height: 70,
+                                child: Icon(Icons.downloading,
+                                    color: AppTheme.accent)),
+                      ),
+                      title: Text(mangaTitle,
+                          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Text('Chapter $chNum',
+                              style: const TextStyle(
+                                  color: AppTheme.textSecondary, fontSize: 12)),
+                          const SizedBox(height: 4),
                           LinearProgressIndicator(
-                              value: progress, color: AppTheme.accent),
+                              value: progress, color: AppTheme.accent,
+                              backgroundColor: AppTheme.border),
+                          const SizedBox(height: 2),
                           Text(
                               '${(progress * 100).toStringAsFixed(0)}%',
                               style: const TextStyle(
@@ -135,12 +161,13 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 ],
                 if (completed.isNotEmpty) ...[
                   Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Text('COMPLETED',
-                        style: TextStyle(
+                        style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
-                            color: AppTheme.textSecondary)),
+                            color: AppTheme.textSecondary,
+                            letterSpacing: 1.5)),
                   ),
                   ...completed.map((group) {
                     return ListTile(
@@ -168,6 +195,34 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             ),
     );
   }
+
+  void _confirmDeleteAll(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Delete All Downloads',
+            style: TextStyle(color: AppTheme.textPrimary)),
+        content: const Text('Are you sure? This cannot be undone.',
+            style: TextStyle(color: AppTheme.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () {
+              dm.removeAllDownloads();
+              Navigator.pop(context);
+            },
+            child: const Text('Delete',
+                style: TextStyle(color: AppTheme.danger)),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class DownloadedMangaDetailScreen extends StatefulWidget {
@@ -191,6 +246,20 @@ class _DownloadedMangaDetailScreenState
     extends State<DownloadedMangaDetailScreen> {
   final DownloadManager dm = DownloadManager.shared;
   bool chapterSortAsc = false;
+
+  @override
+  void initState() {
+    super.initState();
+    dm.addListener(_onChanged);
+  }
+
+  void _onChanged() { if (mounted) setState(() {}); }
+
+  @override
+  void dispose() {
+    dm.removeListener(_onChanged);
+    super.dispose();
+  }
 
   List<DownloadedChapter> get downloadedChapters {
     return dm.downloads.values
@@ -250,10 +319,10 @@ class _DownloadedMangaDetailScreenState
             style: const TextStyle(color: AppTheme.textPrimary, fontSize: 16)),
       ),
       body: chapters.isEmpty
-          ? Center(
+          ? const Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
+                children: [
                   Icon(Icons.inbox, size: 48, color: AppTheme.textTertiary),
                   SizedBox(height: 12),
                   Text('No downloaded chapters',
@@ -298,12 +367,11 @@ class _DownloadedMangaDetailScreenState
                 ),
                 const Divider(color: AppTheme.border),
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   child: Row(
                     children: [
                       Text('${chapters.length} CHAPTERS',
-                          style: TextStyle(
+                          style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
                               color: AppTheme.textSecondary,
@@ -341,16 +409,26 @@ class _DownloadedMangaDetailScreenState
                             style: const TextStyle(
                                 color: AppTheme.textPrimary,
                                 fontSize: 14)),
-                        subtitle: Row(children: [
-                          const Icon(Icons.download_done,
+                        subtitle: const Row(children: [
+                          Icon(Icons.download_done,
                               color: AppTheme.success, size: 14),
-                          const SizedBox(width: 4),
+                          SizedBox(width: 4),
                           Text('Downloaded',
                               style: TextStyle(
                                   color: AppTheme.success, fontSize: 12)),
                         ]),
-                        trailing: const Icon(Icons.chevron_right,
-                            color: AppTheme.textTertiary),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline,
+                                  color: AppTheme.textTertiary, size: 20),
+                              onPressed: () => _confirmDelete(dc),
+                            ),
+                            const Icon(Icons.chevron_right,
+                                color: AppTheme.textTertiary),
+                          ],
+                        ),
                         onTap: () => _openChapter(dc),
                       );
                     },
@@ -358,6 +436,34 @@ class _DownloadedMangaDetailScreenState
                 ),
               ],
             ),
+    );
+  }
+
+  void _confirmDelete(DownloadedChapter dc) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Delete Chapter',
+            style: TextStyle(color: AppTheme.textPrimary)),
+        content: Text('Delete Chapter ${dc.chapterNumber}?',
+            style: const TextStyle(color: AppTheme.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () {
+              dm.deleteChapter(dc.mangaSlug, dc.chapterSlug);
+              Navigator.pop(context);
+            },
+            child: const Text('Delete',
+                style: TextStyle(color: AppTheme.danger)),
+          ),
+        ],
+      ),
     );
   }
 }

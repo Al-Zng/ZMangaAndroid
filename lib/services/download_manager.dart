@@ -7,9 +7,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import 'manga_service.dart';
 
-class DownloadManager {
+// ✅ FIX: DownloadManager يرث ChangeNotifier لإشعار الواجهة عند كل تغيير
+class DownloadManager extends ChangeNotifier {
   static final DownloadManager shared = DownloadManager._();
-  DownloadManager._();
+  DownloadManager._() {
+    _load();
+  }
 
   Map<String, DownloadedChapter> _downloads = {};
   Map<String, double> _activeDownloads = {};
@@ -18,10 +21,6 @@ class DownloadManager {
 
   final String _downloadsKey = 'zmanga_downloads';
   final String _queueKey = 'zmanga_download_queue';
-
-  DownloadManager() {
-    _load();
-  }
 
   Map<String, DownloadedChapter> get downloads => _downloads;
   Map<String, double> get activeDownloads => _activeDownloads;
@@ -87,10 +86,12 @@ class DownloadManager {
     Future.doWhile(() async {
       if (_downloadQueue.isEmpty) {
         _isProcessingQueue = false;
+        notifyListeners(); // ✅ FIX: إشعار عند انتهاء القائمة
         return false;
       }
       final task = _downloadQueue.removeAt(0);
       await _saveQueue();
+      notifyListeners(); // ✅ FIX: إشعار عند بدء كل مهمة
       await _downloadChapterFromTask(task);
       return true;
     });
@@ -101,6 +102,7 @@ class DownloadManager {
     if (isDownloaded(task.mangaSlug, task.chapterSlug)) return;
 
     _activeDownloads[key] = 0.0;
+    notifyListeners(); // ✅ FIX: إشعار عند بدء التحميل
 
     final dir = await _getChapterDir(task.mangaSlug, task.chapterSlug);
     await dir.create(recursive: true);
@@ -122,6 +124,8 @@ class DownloadManager {
         localPaths.add(url);
       }
       _activeDownloads[key] = (i + 1) / task.pages.length;
+      // ✅ FIX: إشعار كل 5 صفحات لتحديث شريط التقدم
+      if (i % 5 == 0 || i == task.pages.length - 1) notifyListeners();
     }
 
     final downloaded = DownloadedChapter(
@@ -136,6 +140,7 @@ class DownloadManager {
     _downloads[key] = downloaded;
     _activeDownloads.remove(key);
     await _save();
+    notifyListeners(); // ✅ FIX: إشعار عند اكتمال الفصل
   }
 
   Future<void> downloadChapter({
@@ -148,6 +153,7 @@ class DownloadManager {
         isDownloading(manga.slug, chapter.slug)) return;
 
     _activeDownloads[key] = 0.0;
+    notifyListeners(); // ✅ FIX
 
     final dir = await _getChapterDir(manga.slug, chapter.slug);
     await dir.create(recursive: true);
@@ -161,6 +167,7 @@ class DownloadManager {
             await MangaService().fetchChapterPages(manga.slug, chapter.slug);
       } catch (e) {
         _activeDownloads.remove(key);
+        notifyListeners();
         return;
       }
     }
@@ -181,6 +188,7 @@ class DownloadManager {
         localPaths.add(url);
       }
       _activeDownloads[key] = (i + 1) / urls.length;
+      if (i % 5 == 0 || i == urls.length - 1) notifyListeners(); // ✅ FIX
     }
 
     final downloaded = DownloadedChapter(
@@ -195,6 +203,7 @@ class DownloadManager {
     _downloads[key] = downloaded;
     _activeDownloads.remove(key);
     await _save();
+    notifyListeners(); // ✅ FIX
   }
 
   Future<void> deleteChapter(String mangaSlug, String chapterSlug) async {
@@ -205,20 +214,25 @@ class DownloadManager {
     }
     _downloads.remove(key);
     await _save();
+    notifyListeners(); // ✅ FIX
   }
 
   Future<void> removeAllDownloads() async {
     for (final key in _downloads.keys) {
       final parts = key.split('_');
-      if (parts.length == 2) {
-        final dir = await _getChapterDir(parts[0], parts[1]);
+      if (parts.length >= 2) {
+        final mangaSlug = parts[0];
+        final chapterSlug = parts.sublist(1).join('_');
+        final dir = await _getChapterDir(mangaSlug, chapterSlug);
         if (await dir.exists()) await dir.delete(recursive: true);
       }
     }
     _downloads.clear();
     _downloadQueue.clear();
+    _activeDownloads.clear();
     await _save();
     await _saveQueue();
+    notifyListeners(); // ✅ FIX
   }
 
   List<String>? getPages(String mangaSlug, String chapterSlug) {
@@ -253,6 +267,7 @@ class DownloadManager {
           _processQueue();
         }
       }
+      notifyListeners(); // ✅ FIX: إشعار بعد تحميل البيانات
     });
   }
 

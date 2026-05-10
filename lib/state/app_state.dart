@@ -26,6 +26,13 @@ class AppState extends ChangeNotifier {
   List<Manga>? _cachedPopular;
   Map<String, Manga> _mangaCache = {};
 
+  // ─── Settings ────────────────────────────────────────────────────
+  // ✅ FIX: كل الإعدادات متصلة وتُحفظ
+  bool _lowEndMode = false;
+  bool _autoLoadNextChapter = true;
+  bool _reduceMotion = false;
+  bool _keepScreenOn = false;
+
   List<ReadingProgress> get history => _history;
   List<Manga> get library => _library;
   List<Manga> get wantToRead => _wantToRead;
@@ -36,6 +43,12 @@ class AppState extends ChangeNotifier {
   List<Manga>? get cachedLatest => _cachedLatest;
   List<Manga>? get cachedPopular => _cachedPopular;
   Map<String, Manga> get mangaCache => _mangaCache;
+
+  // ✅ Settings getters
+  bool get lowEndMode => _lowEndMode;
+  bool get autoLoadNextChapter => _autoLoadNextChapter;
+  bool get reduceMotion => _reduceMotion;
+  bool get keepScreenOn => _keepScreenOn;
 
   AppState() {
     current = this;
@@ -49,6 +62,45 @@ class AppState extends ChangeNotifier {
     await _loadCompleted();
     await _loadCached();
     await _loadMangaCache();
+    await _loadSettings();
+  }
+
+  // ─── Settings ────────────────────────────────────────────────────
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    _lowEndMode = prefs.getBool('setting_low_end_mode') ?? false;
+    _autoLoadNextChapter = prefs.getBool('setting_auto_load_next') ?? true;
+    _reduceMotion = prefs.getBool('setting_reduce_motion') ?? false;
+    _keepScreenOn = prefs.getBool('setting_keep_screen_on') ?? false;
+    notifyListeners();
+  }
+
+  Future<void> setLowEndMode(bool val) async {
+    _lowEndMode = val;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('setting_low_end_mode', val);
+  }
+
+  Future<void> setAutoLoadNextChapter(bool val) async {
+    _autoLoadNextChapter = val;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('setting_auto_load_next', val);
+  }
+
+  Future<void> setReduceMotion(bool val) async {
+    _reduceMotion = val;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('setting_reduce_motion', val);
+  }
+
+  Future<void> setKeepScreenOn(bool val) async {
+    _keepScreenOn = val;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('setting_keep_screen_on', val);
   }
 
   // ─── History ─────────────────────────────────────────────────────
@@ -114,7 +166,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Want to Read ─────────────────────────────────────────────────
+  // ─── Want to Read ────────────────────────────────────────────────
   void addWantToRead(Manga manga) {
     if (_wantToRead.any((m) => m.slug == manga.slug)) return;
     _wantToRead.insert(0, manga);
@@ -133,13 +185,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> _persistWantToRead() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('zmanga_wanttoread',
+    await prefs.setString('zmanga_want_to_read',
         jsonEncode(_wantToRead.map((e) => e.toJson()).toList()));
   }
 
   Future<void> _loadWantToRead() async {
     final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('zmanga_wanttoread');
+    final data = prefs.getString('zmanga_want_to_read');
     if (data != null) {
       final list = jsonDecode(data) as List;
       _wantToRead = list.map((e) => Manga.fromJson(e)).toList();
@@ -161,7 +213,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool isCompleted(Manga manga) => _completed.any((m) => m.slug == manga.slug);
+  bool isCompleted(Manga manga) =>
+      _completed.any((m) => m.slug == manga.slug);
 
   Future<void> _persistCompleted() async {
     final prefs = await SharedPreferences.getInstance();
@@ -179,21 +232,27 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ─── Home Caching ────────────────────────────────────────────────
+  // ─── Cache ───────────────────────────────────────────────────────
   void saveCachedLatest(List<Manga> items) {
     _cachedLatest = items;
-    _persistCached('zmanga_cached_latest', items);
+    _persistCached();
   }
 
   void saveCachedPopular(List<Manga> items) {
     _cachedPopular = items;
-    _persistCached('zmanga_cached_popular', items);
+    _persistCached();
   }
 
-  Future<void> _persistCached(String key, List<Manga> items) async {
+  Future<void> _persistCached() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-        key, jsonEncode(items.map((e) => e.toJson()).toList()));
+    if (_cachedLatest != null) {
+      await prefs.setString('zmanga_cached_latest',
+          jsonEncode(_cachedLatest!.map((e) => e.toJson()).toList()));
+    }
+    if (_cachedPopular != null) {
+      await prefs.setString('zmanga_cached_popular',
+          jsonEncode(_cachedPopular!.map((e) => e.toJson()).toList()));
+    }
   }
 
   Future<void> _loadCached() async {
@@ -233,11 +292,7 @@ class AppState extends ChangeNotifier {
   }
 
   // ─── Cloudflare ──────────────────────────────────────────────────
-
-  /// يُطلق من MangaService عند اكتشاف Cloudflare
-  /// يعيد Future<bool> — true إذا حُل، false إذا أُغلق بالإجبار
   Future<bool> triggerCloudflare(String url) {
-    // إذا كان الـ sheet مفتوحاً بالفعل لنفس الـ URL، انتظر الـ completer الموجود
     if (_showCloudflareSheet) {
       final c = Completer<bool>();
       _cfWaiters.add(c);
@@ -253,45 +308,27 @@ class AppState extends ChangeNotifier {
     return c.future;
   }
 
-  /// يُستدعى من CloudflareBypassSheet عند النجاح
   void onCloudflareSolved() {
     _showCloudflareSheet = false;
-
-    // ✅ CRITICAL: markCfSolved أولاً — قبل أي notifyListeners()
-    // يضمن أن أي fetchHTML جديد يستخدم WebView (الذي عنده cf_clearance)
     MangaService().markCfSolved();
+    notifyListeners();
 
-    notifyListeners(); // يُغلق الـ sheet فقط
-
-    // أبلغ كل المنتظرين بالنجاح
-    // هم سيُكملون retry بأنفسهم عبر _fetchHTMLViaWebView
     for (final c in _cfWaiters) {
       if (!c.isCompleted) c.complete(true);
     }
     _cfWaiters.clear();
-
-    // ❌ لا نستدعي _reloadTrigger++ هنا
-    // السبب: _reloadTrigger يستدعي _loadLatest(reset: true) في HomeScreen
-    // هذا يُلغي الـ latestManga ويبدأ fetchHTML جديد على نفس الـ WebView
-    // بينما الـ fetchHTML القديم (المنتظر على Completer) ينتهي ويستخدم نفس الـ WebView
-    // النتيجة: race condition → الأول يخسر → timeout 60 ثانية → صفحة فارغة
-    //
-    // الحل الصحيح: نترك الـ fetchHTML المنتظرة تُكمل retry بأنفسها ← تُحدّث الـ UI تلقائياً
   }
 
-  /// يُستدعى عند الإغلاق بالإجبار (بدون حل)
   void onCloudflareDismissed() {
     _showCloudflareSheet = false;
     notifyListeners();
 
-    // أبلغ المنتظرين بالفشل
     for (final c in _cfWaiters) {
       if (!c.isCompleted) c.complete(false);
     }
     _cfWaiters.clear();
   }
 
-  // للتوافق مع الكود القديم
   void dismissCloudflare() => onCloudflareDismissed();
 
   void triggerReload() {
