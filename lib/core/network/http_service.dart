@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../cloudflare/cookie_service.dart';
 import 'user_agent.dart';
+import 'platform_cookie_bridge.dart';
 
 class HttpService {
   static final HttpService _instance = HttpService._internal();
@@ -15,13 +16,11 @@ class HttpService {
       'User-Agent': AppUserAgent.iosSafari,
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'ar,en;q=0.9',
+      'Referer': 'https://lekmanga.site',
     },
   ));
 
   // ─── كوكيز الجلسة (مُنقولة من WebView بعد حل CF) ─────────────────
-  // هذا يُحاكي iOS: WKWebsiteDataStore.getAllCookies → HTTPCookieStorage
-  // ملاحظة: cf_clearance هي HttpOnly — لن تظهر هنا
-  // لكنها موجودة في WebView cookie store وتُرسل عبر _fetchHTMLViaWebView
   String _sessionCookies = '';
 
   void addSessionCookies(String cookies) {
@@ -62,20 +61,31 @@ class HttpService {
     return response.data ?? '';
   }
 
-  // ─── دمج كوكيز CookieService + session cookies ────────────────────
+  // ─── دمج كوكيز من ثلاثة مصادر ────────────────────────────────────
+  // ✅ FIX SESSION + SEARCH: نضيف كوكيز Android CookieManager التي تحتوي
+  // على cf_clearance (HttpOnly) — مطابق لما يفعله iOS:
+  //   WKWebsiteDataStore.default().httpCookieStore.getAllCookies()
+  //   → HTTPCookieStorage.shared → URLSession
   Future<String> _buildCookieHeader(String url) async {
-    final saved = await CookieService().getCookieHeader();
-    final parts = <String>[];
-    if (saved.isNotEmpty) parts.add(saved);
-    if (_sessionCookies.isNotEmpty) {
-      // لا تُكرر الكوكيز الموجودة
-      for (final part in _sessionCookies.split(';')) {
-        final name = part.split('=').first.trim();
-        if (name.isNotEmpty && !saved.contains('$name=')) {
-          parts.add(part.trim());
-        }
+    final saved         = await CookieService().getCookieHeader();
+    final androidCookies = await PlatformCookieBridge.getMergedCookiesForUrl(url);
+
+    final merged = <String, String>{};
+    _parseCookies(saved, merged);            // أولوية منخفضة
+    _parseCookies(_sessionCookies, merged);  // أولوية متوسطة
+    _parseCookies(androidCookies, merged);   // أعلى أولوية — يغلب على ما سبق
+
+    if (merged.isEmpty) return '';
+    return merged.entries.map((e) => '${e.key}=${e.value}').join('; ');
+  }
+
+  void _parseCookies(String raw, Map<String, String> out) {
+    if (raw.isEmpty) return;
+    for (final part in raw.split(';')) {
+      final kv = part.trim().split('=');
+      if (kv.isNotEmpty && kv[0].trim().isNotEmpty) {
+        out[kv[0].trim()] = kv.sublist(1).join('=').trim();
       }
     }
-    return parts.join('; ');
   }
 }

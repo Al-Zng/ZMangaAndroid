@@ -8,6 +8,8 @@ import '../theme/app_theme.dart';
 import '../models/models.dart';
 import '../services/manga_service.dart';
 import '../services/download_manager.dart';
+import '../core/network/platform_cookie_bridge.dart';
+import '../core/network/user_agent.dart';
 
 class ReaderScreen extends StatefulWidget {
   final Manga manga;
@@ -45,44 +47,94 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool showUI = true;
   int currentPage = 0;
 
-  late PageController _pageCtrl;
+  // ✅ FIX READER NAV: ScrollController بدل PageController — تمرير حر بدون snap
+  // مطابق لـ iOS: ScrollView(.vertical) + LazyVStack
+  late final ScrollController _scrollCtrl;
 
-  // ✅ OPT: Pre-cache المسافة (عدد الصفحات قبل وبعد)
-  static const _preCacheDistance = 3;
+  // GlobalKey لكل صفحة — لتتبع الصفحة الحالية بدقة عبر موضع العنصر في الشاشة
+  final List<GlobalKey> _pageKeys = [];
 
   @override
   void initState() {
     super.initState();
-    _pageCtrl = PageController(initialPage: widget.initialPage);
+    _scrollCtrl = ScrollController();
+    _scrollCtrl.addListener(_onScroll);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _loadInitial();
   }
 
   @override
   void dispose() {
-    _pageCtrl.dispose();
+    _scrollCtrl.removeListener(_onScroll);
+    _scrollCtrl.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
+  // ─── تتبع الصفحة الحالية عند التمرير ────────────────────────────
+  // نفحص أي عنصر يقع منتصفه في منتصف الشاشة — مطابق لـ iOS's GeometryReader
+  void _onScroll() {
+    if (!mounted || _pageKeys.isEmpty) return;
+    final screenMidY = MediaQuery.sizeOf(context).height / 2;
+
+    // نبحث في نافذة محدودة حول الصفحة الحالية لتحسين الأداء
+    final start = (currentPage - 4).clamp(0, _pageKeys.length - 1);
+    final end   = (currentPage + 6).clamp(0, _pageKeys.length - 1);
+
+    for (int i = start; i <= end; i++) {
+      final ctx = _pageKeys[i].currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+      final top    = box.localToGlobal(Offset.zero).dy;
+      final bottom = top + box.size.height;
+      if (top <= screenMidY && bottom > screenMidY) {
+        if (currentPage != i) {
+          currentPage = i;
+          _saveProgress(i);
+          _preCacheAround(i);
+          if (i >= allPages.length - 5) _loadNextChapter();
+          if (mounted) setState(() {}); // تحديث العداد وشريط التقدم فقط
+        }
+        return;
+      }
+    }
+  }
+
   Future<void> _loadInitial() async {
-    setState(() { isLoading = true; error = null; allPages = []; });
+    setState(() { isLoading = true; error = null; allPages = []; _pageKeys.clear(); });
     try {
-      List<String> urls = await _resolvePages(widget.manga.slug, widget.chapter.slug);
+      final urls = await _resolvePages(widget.manga.slug, widget.chapter.slug);
       if (!mounted) return;
       if (urls.isEmpty) throw Exception('No chapter images found');
+      final entries = urls.map((u) => _PageEntry(widget.chapter.slug, u)).toList();
       setState(() {
-        allPages = urls.map((u) => _PageEntry(widget.chapter.slug, u)).toList();
+        allPages = entries;
         boundaries = [_Boundary(widget.chapter.slug, 0)];
         loadedChapters = {widget.chapter.slug};
         isLoading = false;
         currentPage = widget.initialPage.clamp(0, allPages.length - 1);
+        // إنشاء GlobalKey لكل صفحة
+        _pageKeys.addAll(List.generate(allPages.length, (_) => GlobalKey()));
       });
-      // ✅ OPT: Pre-cache الصفحات الأولى فوراً
+
+      // ✅ التمرير للصفحة الأولى بعد البناء
+      if (widget.initialPage > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToPage(widget.initialPage));
+      }
       _preCacheAround(currentPage);
     } catch (e) {
       if (!mounted) return;
       setState(() { error = e.toString().replaceAll('Exception: ', ''); isLoading = false; });
+    }
+  }
+
+  // التمرير التلقائي لصفحة معينة (للصفحة الأولى عند بدء القراءة)
+  void _scrollToPage(int pageIdx) {
+    if (pageIdx <= 0 || pageIdx >= _pageKeys.length) return;
+    final ctx = _pageKeys[pageIdx].currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(ctx, alignment: 0.0, duration: Duration.zero);
     }
   }
 
@@ -95,14 +147,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
         .timeout(const Duration(seconds: 45), onTimeout: () => throw Exception('Loading timeout — tap Retry'));
   }
 
-  // ✅ OPT: Pre-cache صفحات مجاورة بشكل استباقي
+  // ✅ OPT: Pre-cache الصفحات المجاورة — نمرر الـ Referer الديناميكي
   void _preCacheAround(int idx) {
+    const distance = 3;
     final start = (idx - 1).clamp(0, allPages.length - 1);
-    final end   = (idx + _preCacheDistance).clamp(0, allPages.length - 1);
+    final end   = (idx + distance).clamp(0, allPages.length - 1);
     for (int i = start; i <= end; i++) {
       final url = allPages[i].url;
-      if (!url.startsWith('/')) { // skip local paths
-        precacheImage(CachedNetworkImageProvider(url, headers: const {'Referer': 'https://lekmanga.site'}), context);
+      if (!url.startsWith('/')) {
+        precacheImage(
+          CachedNetworkImageProvider(
+            url,
+            headers: {'Referer': _ReaderPageImage._refererFor(url)},
+          ),
+          context,
+        );
       }
     }
   }
@@ -128,18 +187,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
         boundaries.add(_Boundary(next.slug, startIdx));
         loadedChapters.add(next.slug);
         loadingNext = false;
+        // ✅ نضيف GlobalKey للصفحات الجديدة
+        _pageKeys.addAll(List.generate(urls.length, (_) => GlobalKey()));
       });
     } catch (_) {
       if (mounted) setState(() => loadingNext = false);
     }
-  }
-
-  void _onPageChanged(int idx) {
-    if (currentPage == idx) return;
-    setState(() => currentPage = idx);
-    _saveProgress(idx);
-    _preCacheAround(idx);
-    if (idx >= allPages.length - 5) _loadNextChapter();
   }
 
   void _saveProgress(int pageIdx) {
@@ -177,23 +230,41 @@ class _ReaderScreenState extends State<ReaderScreen> {
         else if (allPages.isEmpty)
           const Center(child: Text('No pages', style: TextStyle(color: Colors.white54)))
         else
+          // ✅ FIX READER NAV: ListView.builder بدل PageView — تمرير حر بدون snap
+          // مطابق تماماً لـ iOS: ScrollView(.vertical) + LazyVStack(spacing: 0)
           GestureDetector(
             onTap: () => setState(() => showUI = !showUI),
-            child: PageView.builder(
-              controller: _pageCtrl,
+            child: ListView.builder(
+              controller: _scrollCtrl,
               scrollDirection: Axis.vertical,
+              physics: const BouncingScrollPhysics(), // iOS-like bounce
+              padding: EdgeInsets.zero,
               itemCount: allPages.length + (loadingNext ? 1 : 0),
-              onPageChanged: _onPageChanged,
               itemBuilder: (_, i) {
-                if (i >= allPages.length) return const Center(
-                  child: CircularProgressIndicator(color: AppTheme.accent, strokeWidth: 2));
-                if (boundaries.any((b) => b.startIndex == i) && i > 0) {
-                  final num = widget.allChapters.firstWhere(
-                    (c) => c.slug == boundaries.firstWhere((b) => b.startIndex == i).slug,
-                    orElse: () => widget.chapter).number;
-                  return _PageWithSeparator(url: allPages[i].url, chapterNumber: num);
+                if (i >= allPages.length) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 32),
+                    child: Center(child: CircularProgressIndicator(color: AppTheme.accent, strokeWidth: 2)),
+                  );
                 }
-                return _ReaderPage(url: allPages[i].url);
+
+                // فاصل بين الفصول
+                Widget pageWidget;
+                if (boundaries.any((b) => b.startIndex == i) && i > 0) {
+                  final boundary = boundaries.firstWhere((b) => b.startIndex == i);
+                  final num = widget.allChapters.firstWhere(
+                    (c) => c.slug == boundary.slug,
+                    orElse: () => widget.chapter).number;
+                  pageWidget = Column(mainAxisSize: MainAxisSize.min, children: [
+                    _ChapterSeparator(number: num),
+                    _ReaderPageImage(url: allPages[i].url),
+                  ]);
+                } else {
+                  pageWidget = _ReaderPageImage(url: allPages[i].url);
+                }
+
+                // نلف كل عنصر بـ KeyedSubtree لتتبع موضعه في الشاشة
+                return KeyedSubtree(key: _pageKeys[i], child: pageWidget);
               },
             ),
           ),
@@ -202,7 +273,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         if (showUI && allPages.isNotEmpty)
           Positioned(top: 0, left: 0, right: 0, child: _topBar()),
 
-        // ─── Close button (always on top) ─────────────────────────
+        // ─── زر الإغلاق (دائماً في الأعلى) ───────────────────────
         SafeArea(child: Align(alignment: Alignment.topLeft,
           child: Padding(padding: const EdgeInsets.only(top: 8, left: 8),
             child: _CloseButton(onTap: () => Navigator.pop(context))))),
@@ -236,13 +307,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     decoration: const BoxDecoration(gradient: LinearGradient(
       colors: [Colors.transparent, Colors.black54],
       begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-    child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: ClipRRect(borderRadius: BorderRadius.circular(2),
-          child: LinearProgressIndicator(
-            value: allPages.isNotEmpty ? (currentPage + 1) / allPages.length : 0,
-            backgroundColor: Colors.white12, color: AppTheme.accent, minHeight: 2))),
-    ]),
+    child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: ClipRRect(borderRadius: BorderRadius.circular(2),
+        child: LinearProgressIndicator(
+          value: allPages.isNotEmpty ? (currentPage + 1) / allPages.length : 0,
+          backgroundColor: Colors.white12, color: AppTheme.accent, minHeight: 2))),
   );
 
   Widget _loadingView() => const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -282,37 +351,96 @@ class _CloseButton extends StatelessWidget {
         child: Icon(Icons.close, color: Colors.white, size: 22))));
 }
 
-class _ReaderPage extends StatelessWidget {
+// ✅ FIX PLACEHOLDER: صورة الفصل مع كوكيز Android WebView + Referer ديناميكي
+// مطابق لـ iOS: CachedAsyncImage التي تقرأ WKWebsiteDataStore cookies وتضبط
+// الـ Referer بناءً على domain الصورة (s3.lekmanga.com → Referer: lekmanga.com)
+class _ReaderPageImage extends StatefulWidget {
   final String url;
-  const _ReaderPage({required this.url});
+  const _ReaderPageImage({super.key, required this.url});
+
+  // Referer ديناميكي — يطابق domain الصورة بدلاً من إرسال lekmanga.site دائماً
+  // iOS: let mainDomain = components.suffix(2).joined(separator: ".")
+  static String _refererFor(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final parts = uri.host.split('.');
+      if (parts.length >= 2) {
+        return 'https://${parts.sublist(parts.length - 2).join('.')}/';
+      }
+      return 'https://lekmanga.site/';
+    } catch (_) {
+      return 'https://lekmanga.site/';
+    }
+  }
+
+  @override
+  State<_ReaderPageImage> createState() => _ReaderPageImageState();
+}
+
+class _ReaderPageImageState extends State<_ReaderPageImage> {
+  // نبني الـ headers مرة واحدة فقط عند init
+  late final Future<Map<String, String>> _headersFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _headersFuture = _buildHeaders();
+  }
+
+  Future<Map<String, String>> _buildHeaders() async {
+    // نقرأ كوكيز Android CookieManager (بما فيها cf_clearance) — مطابق iOS
+    final cookies = await PlatformCookieBridge.getMergedCookiesForUrl(widget.url);
+    final referer = _ReaderPageImage._refererFor(widget.url);
+    return {
+      'Referer': referer,
+      'User-Agent': AppUserAgent.androidChrome,
+      if (cookies.isNotEmpty) 'Cookie': cookies,
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (url.startsWith('/')) {
+    // صورة محلية (تحميل مسبق offline)
+    if (widget.url.startsWith('/')) {
       return Image.file(
-        File(url),
-        width: double.infinity, fit: BoxFit.fitWidth,
-        errorBuilder: (_, __, ___) => const _PageError());
+        File(widget.url),
+        width: double.infinity,
+        fit: BoxFit.fitWidth,
+        errorBuilder: (_, __, ___) => const _PageError(),
+      );
     }
-    return CachedNetworkImage(
-      imageUrl: url,
-      httpHeaders: const {'Referer': 'https://lekmanga.site'},
-      width: double.infinity,
-      fit: BoxFit.fitWidth,
-      fadeInDuration: const Duration(milliseconds: 150),
-      errorWidget: (_, __, ___) => const _PageError());
-  }
-}
 
-class _PageWithSeparator extends StatelessWidget {
-  final String url;
-  final String chapterNumber;
-  const _PageWithSeparator({required this.url, required this.chapterNumber});
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    _ChapterSeparator(number: chapterNumber),
-    Expanded(child: _ReaderPage(url: url)),
-  ]);
+    return FutureBuilder<Map<String, String>>(
+      future: _headersFuture,
+      builder: (ctx, snap) {
+        // بمجرد اكتمال الـ headers نبدأ تحميل الصورة
+        // الـ Future سريع جداً (< 10ms) لأنه مجرد MethodChannel محلي
+        if (!snap.hasData) {
+          return SizedBox(
+            height: MediaQuery.sizeOf(ctx).height * 0.6,
+            child: const Center(
+              child: CircularProgressIndicator(color: AppTheme.accent, strokeWidth: 2),
+            ),
+          );
+        }
+        return CachedNetworkImage(
+          imageUrl: widget.url,
+          httpHeaders: snap.data!,
+          width: double.infinity,
+          fit: BoxFit.fitWidth,
+          fadeInDuration: const Duration(milliseconds: 150),
+          // placeholder حتى يتم التحميل
+          placeholder: (_, __) => SizedBox(
+            height: MediaQuery.sizeOf(ctx).height * 0.6,
+            child: const Center(
+              child: CircularProgressIndicator(color: AppTheme.accent, strokeWidth: 2),
+            ),
+          ),
+          errorWidget: (_, __, ___) => const _PageError(),
+        );
+      },
+    );
+  }
 }
 
 class _ChapterSeparator extends StatelessWidget {
