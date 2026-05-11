@@ -30,66 +30,14 @@ jobs:
         run: |
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' android/app/src/main/AndroidManifest.xml
 
-      # ─── إضافة Cookie Bridge (MethodChannel) إلى MainActivity ────────────
-      # يستخرج package name تلقائياً من الملف المُولَّد ويُعيد كتابته
-      # هذا يُمكّن Flutter من قراءة cf_clearance من Android CookieManager
       - name: Patch MainActivity with Cookie Bridge MethodChannel
         run: |
-          python3 - << 'PYEOF'
-          import pathlib, re
-
-          # البحث التلقائي عن MainActivity.kt بغض النظر عن package name
-          matches = list(pathlib.Path('android').rglob('MainActivity.kt'))
-          if not matches:
-              raise FileNotFoundError("MainActivity.kt not found!")
-          path = matches[0]
-
-          # استخراج package name من الملف المُولَّد
-          original = path.read_text()
-          pkg_match = re.search(r'package\s+(\S+)', original)
-          if not pkg_match:
-              raise ValueError("Could not find package declaration")
-          package = pkg_match.group(1)
-          print(f"Package: {package}")
-
-          # كتابة MainActivity الكاملة مع MethodChannel
-          new_content = f"""package {package}
-
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
-import android.webkit.CookieManager
-
-class MainActivity : FlutterActivity() {{
-
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
-        super.configureFlutterEngine(flutterEngine)
-
-        // ─── Cookie Bridge: يُرجع كوكيز Android WebView (بما فيها cf_clearance) ───
-        // مطابق لـ iOS: WKWebsiteDataStore.default().httpCookieStore.getAllCookies()
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            "zmanga/cookies"
-        ).setMethodCallHandler {{ call, result ->
-            when (call.method) {{
-                "getCookies" -> {{
-                    val url = call.argument<String>("url") ?: ""
-                    val cookies = try {{
-                        CookieManager.getInstance().getCookie(url) ?: ""
-                    }} catch (e: Exception) {{
-                        ""
-                    }}
-                    result.success(cookies)
-                }}
-                else -> result.notImplemented()
-            }}
-        }}
-    }}
-}}
-"""
-          path.write_text(new_content)
-          print(f"✅ Patched: {path}")
-          PYEOF
+          MAIN_KT=$(find android -name "MainActivity.kt" | head -1)
+          PKG=$(grep -oP 'package\s+\K\S+' "$MAIN_KT")
+          echo "Package: $PKG"
+          sed "s/__PACKAGE__/$PKG/" ci/MainActivity.kt > "$MAIN_KT"
+          echo "Patched: $MAIN_KT"
+          cat "$MAIN_KT"
 
       - name: Get dependencies
         run: flutter pub get
