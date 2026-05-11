@@ -10,7 +10,6 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // ─── Cookie Bridge: يُرجع كوكيز Android WebView (بما فيها cf_clearance) ───
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "zmanga/cookies"
