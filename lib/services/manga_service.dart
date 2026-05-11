@@ -59,6 +59,11 @@ class MangaService {
     _bridgeWebViewCookiesToDio();
   }
 
+  // ✅ FIX BG: إعادة تعيين حالة CF عند العودة من الخلفية
+  void resetCfState() {
+    _lastCfSolveTime = null;
+  }
+
   // ─── نقل الكوكيز من WebView إلى Dio ───────────────────────────────
   // يُحاكي iOS: WKWebsiteDataStore.getAllCookies → HTTPCookieStorage
   // cf_clearance هي HttpOnly — لا تنتقل هنا لكن WebView يُرسلها تلقائياً

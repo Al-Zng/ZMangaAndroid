@@ -1,469 +1,264 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import '../models/models.dart';
 import '../services/download_manager.dart';
 import '../widgets/cached_image.dart';
 import 'reader_screen.dart';
 
-class DownloadsScreen extends StatefulWidget {
+class DownloadsScreen extends StatelessWidget {
   const DownloadsScreen({super.key});
 
   @override
-  State<DownloadsScreen> createState() => _DownloadsScreenState();
-}
-
-class _DownloadsScreenState extends State<DownloadsScreen> {
-  final DownloadManager dm = DownloadManager.shared;
-
-  @override
-  void initState() {
-    super.initState();
-    // ✅ FIX: نستمع لتغييرات DownloadManager ونُعيد بناء الشاشة تلقائياً
-    dm.addListener(_onDownloadChanged);
-  }
-
-  void _onDownloadChanged() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    dm.removeListener(_onDownloadChanged);
-    super.dispose();
-  }
-
-  List<DownloadedMangaGroup> get downloadedMangas {
-    final grouped = dm.downloads.values
-        .fold<Map<String, List<DownloadedChapter>>>({}, (map, chapter) {
-      map.putIfAbsent(chapter.mangaSlug, () => []);
-      map[chapter.mangaSlug]!.add(chapter);
-      return map;
-    });
-
-    return grouped.entries.map((entry) {
-      final slug = entry.key;
-      final chapters = entry.value;
-      final first = chapters.first;
-      final uniqueChapters = chapters.toSet().toList()
-        ..sort((a, b) =>
-            (double.tryParse(b.chapterNumber) ?? 0)
-                .compareTo(double.tryParse(a.chapterNumber) ?? 0));
-      return DownloadedMangaGroup(
-        mangaSlug: slug,
-        mangaTitle: first.mangaTitle,
-        mangaCover: first.mangaCover,
-        chapters: uniqueChapters,
-      );
-    }).toList()
-      ..sort((a, b) => a.mangaTitle.compareTo(b.mangaTitle));
-  }
-
-  void _openDownloadedManga(DownloadedMangaGroup group) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DownloadedMangaDetailScreen(
-          mangaSlug: group.mangaSlug,
-          mangaTitle: group.mangaTitle,
-          mangaCover: group.mangaCover,
-        ),
-      ),
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
+    // ✅ FIX: نستخدم context.watch على DownloadManager المُسجَّل في Provider
+    final dm = context.watch<DownloadManager>();
     final downloading = dm.activeDownloads.keys.toList();
-    final completed = downloadedMangas;
+    final groups = _buildGroups(dm);
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
         backgroundColor: AppTheme.surface,
-        title: const Text('Downloads',
-            style: TextStyle(color: AppTheme.textPrimary)),
+        title: Text('Downloads', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 17)),
         actions: [
           if (dm.downloads.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep, color: AppTheme.danger),
-              onPressed: () => _confirmDeleteAll(context),
-            ),
+            TextButton(
+              onPressed: () => _confirmClearAll(context, dm),
+              child: Text('Clear All', style: GoogleFonts.inter(color: AppTheme.danger, fontSize: 15))),
         ],
       ),
-      body: completed.isEmpty && downloading.isEmpty
-          ? const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.download, size: 48,
-                      color: AppTheme.textTertiary),
-                  SizedBox(height: 12),
-                  Text('No downloads yet',
-                      style: TextStyle(color: AppTheme.textSecondary)),
-                ],
-              ),
-            )
-          : ListView(
-              children: [
-                if (downloading.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Text('DOWNLOADING',
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.textSecondary,
-                            letterSpacing: 1.5)),
-                  ),
-                  ...downloading.map((key) {
-                    final progress = dm.activeDownloads[key] ?? 0;
-                    final parts = key.split('_');
-                    // ✅ FIX: تحاول الحصول على معلومات أفضل من _downloads إن وُجدت
-                    final knownChapter = dm.downloads[key];
-                    final mangaTitle = knownChapter?.mangaTitle ?? parts.first;
-                    final chNum = knownChapter?.chapterNumber ?? '...';
-                    return ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: knownChapter != null
-                            ? CachedMangaImage(
-                                url: knownChapter.mangaCover,
-                                width: 50,
-                                height: 70)
-                            : const SizedBox(
-                                width: 50,
-                                height: 70,
-                                child: Icon(Icons.downloading,
-                                    color: AppTheme.accent)),
-                      ),
-                      title: Text(mangaTitle,
-                          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Chapter $chNum',
-                              style: const TextStyle(
-                                  color: AppTheme.textSecondary, fontSize: 12)),
-                          const SizedBox(height: 4),
-                          LinearProgressIndicator(
-                              value: progress, color: AppTheme.accent,
-                              backgroundColor: AppTheme.border),
-                          const SizedBox(height: 2),
-                          Text(
-                              '${(progress * 100).toStringAsFixed(0)}%',
-                              style: const TextStyle(
-                                  color: AppTheme.textTertiary,
-                                  fontSize: 11)),
-                        ],
-                      ),
-                    );
-                  }),
-                ],
-                if (completed.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Text('COMPLETED',
-                        style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.textSecondary,
-                            letterSpacing: 1.5)),
-                  ),
-                  ...completed.map((group) {
-                    return ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: CachedMangaImage(
-                            url: group.mangaCover,
-                            width: 50,
-                            height: 70),
-                      ),
-                      title: Text(group.mangaTitle,
-                          style: const TextStyle(
-                              color: AppTheme.textPrimary)),
-                      subtitle: Text(
-                          '${group.chapters.length} chapters downloaded',
-                          style: const TextStyle(
-                              color: AppTheme.textSecondary)),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: AppTheme.textTertiary),
-                      onTap: () => _openDownloadedManga(group),
-                    );
-                  }),
-                ],
+      body: groups.isEmpty && downloading.isEmpty
+          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.download_outlined, size: 56, color: AppTheme.textTertiary),
+              const SizedBox(height: 12),
+              Text('No downloads yet', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 15)),
+            ]))
+          : ListView(children: [
+              if (downloading.isNotEmpty) ...[
+                _header('DOWNLOADING'),
+                ...downloading.map((key) {
+                  final prog = dm.activeDownloads[key] ?? 0;
+                  final meta = dm.downloads[key] ?? dm.activeChapterMeta(key);
+                  return _DownloadingRow(key: key, meta: meta, progress: prog);
+                }),
               ],
-            ),
+              if (dm.downloadQueue.isNotEmpty) ...[
+                _header('QUEUED (${dm.downloadQueue.length})'),
+                ...dm.downloadQueue.take(3).map((t) => ListTile(
+                  leading: const Icon(Icons.queue, color: AppTheme.textTertiary, size: 20),
+                  title: Text(t.mangaTitle, style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13)),
+                  subtitle: Text('Chapter ${t.chapterNumber}', style: GoogleFonts.inter(color: AppTheme.textTertiary, fontSize: 12)),
+                )),
+              ],
+              if (groups.isNotEmpty) ...[
+                _header('COMPLETED (${dm.downloads.length} chapters)'),
+                ...groups.map((g) => _MangaGroupRow(group: g)),
+              ],
+            ]),
     );
   }
 
-  void _confirmDeleteAll(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Delete All Downloads',
-            style: TextStyle(color: AppTheme.textPrimary)),
-        content: const Text('Are you sure? This cannot be undone.',
-            style: TextStyle(color: AppTheme.textSecondary)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () {
-              dm.removeAllDownloads();
-              Navigator.pop(context);
-            },
-            child: const Text('Delete',
-                style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
+  Widget _header(String text) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+    child: Text(text, style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700,
+        color: AppTheme.textSecondary, letterSpacing: 1.5)));
+
+  List<DownloadedMangaGroup> _buildGroups(DownloadManager dm) {
+    final grouped = <String, List<DownloadedChapter>>{};
+    for (final ch in dm.downloads.values) {
+      grouped.putIfAbsent(ch.mangaSlug, () => []).add(ch);
+    }
+    final groups = grouped.entries.map((e) {
+      final chs = e.value..sort((a, b) => (double.tryParse(b.chapterNumber) ?? 0).compareTo(double.tryParse(a.chapterNumber) ?? 0));
+      return DownloadedMangaGroup(mangaSlug: e.key, mangaTitle: chs.first.mangaTitle, mangaCover: chs.first.mangaCover, chapters: chs);
+    }).toList()..sort((a, b) => a.mangaTitle.compareTo(b.mangaTitle));
+    return groups;
+  }
+
+  void _confirmClearAll(BuildContext context, DownloadManager dm) {
+    showDialog(context: context, builder: (_) => AlertDialog(
+      backgroundColor: AppTheme.surface,
+      title: Text('Delete All Downloads', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
+      content: Text('All downloaded chapters will be permanently deleted.', style: GoogleFonts.inter(color: AppTheme.textSecondary)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context),
+          child: Text('Cancel', style: GoogleFonts.inter(color: AppTheme.textSecondary))),
+        TextButton(onPressed: () { dm.removeAllDownloads(); Navigator.pop(context); },
+          child: Text('Delete', style: GoogleFonts.inter(color: AppTheme.danger, fontWeight: FontWeight.w600))),
+      ],
+    ));
   }
 }
 
-class DownloadedMangaDetailScreen extends StatefulWidget {
-  final String mangaSlug;
-  final String mangaTitle;
-  final String mangaCover;
-
-  const DownloadedMangaDetailScreen({
-    super.key,
-    required this.mangaSlug,
-    required this.mangaTitle,
-    required this.mangaCover,
-  });
+// ─── Downloading row ──────────────────────────────────────────────────────────
+class _DownloadingRow extends StatelessWidget {
+  final String key;
+  final DownloadedChapter? meta;
+  final double progress;
+  const _DownloadingRow({required this.key, this.meta, required this.progress});
 
   @override
-  State<DownloadedMangaDetailScreen> createState() =>
-      _DownloadedMangaDetailScreenState();
+  Widget build(BuildContext context) => ListTile(
+    leading: meta != null
+        ? ClipRRect(borderRadius: BorderRadius.circular(6),
+            child: CachedMangaImage(url: meta!.mangaCover, width: 44, height: 60))
+        : Container(width: 44, height: 60, decoration: BoxDecoration(
+            color: AppTheme.card, borderRadius: BorderRadius.circular(6)),
+            child: const Icon(Icons.downloading, color: AppTheme.accent, size: 20)),
+    title: Text(meta?.mangaTitle ?? '...', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w500)),
+    subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Chapter ${meta?.chapterNumber ?? "..."}', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+      const SizedBox(height: 6),
+      ClipRRect(borderRadius: BorderRadius.circular(4),
+        child: LinearProgressIndicator(value: progress, color: AppTheme.accent,
+          backgroundColor: AppTheme.border, minHeight: 4)),
+      const SizedBox(height: 2),
+      Text('${(progress * 100).toStringAsFixed(0)}%',
+        style: GoogleFonts.inter(color: AppTheme.textTertiary, fontSize: 11)),
+    ]),
+  );
 }
 
-class _DownloadedMangaDetailScreenState
-    extends State<DownloadedMangaDetailScreen> {
-  final DownloadManager dm = DownloadManager.shared;
-  bool chapterSortAsc = false;
+// ─── Manga group row ──────────────────────────────────────────────────────────
+class _MangaGroupRow extends StatelessWidget {
+  final DownloadedMangaGroup group;
+  const _MangaGroupRow({required this.group});
 
   @override
-  void initState() {
-    super.initState();
-    dm.addListener(_onChanged);
-  }
+  Widget build(BuildContext context) => ListTile(
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    leading: ClipRRect(borderRadius: BorderRadius.circular(8),
+      child: CachedMangaImage(url: group.mangaCover, width: 46, height: 64)),
+    title: Text(group.mangaTitle, style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
+    subtitle: Text('${group.chapters.length} chapters downloaded', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+    trailing: const Icon(Icons.chevron_right, color: AppTheme.textTertiary, size: 18),
+    onTap: () => Navigator.push(context, MaterialPageRoute(
+      builder: (_) => _DownloadedDetailScreen(group: group))),
+  );
+}
 
-  void _onChanged() { if (mounted) setState(() {}); }
-
+// ─── Detail screen ────────────────────────────────────────────────────────────
+class _DownloadedDetailScreen extends StatefulWidget {
+  final DownloadedMangaGroup group;
+  const _DownloadedDetailScreen({required this.group});
   @override
-  void dispose() {
-    dm.removeListener(_onChanged);
-    super.dispose();
-  }
+  State<_DownloadedDetailScreen> createState() => _DownloadedDetailScreenState();
+}
 
-  List<DownloadedChapter> get downloadedChapters {
-    return dm.downloads.values
-        .where((c) => c.mangaSlug == widget.mangaSlug)
-        .toList()
-      ..sort((a, b) => chapterSortAsc
-          ? (double.tryParse(a.chapterNumber) ?? 0)
-              .compareTo(double.tryParse(b.chapterNumber) ?? 0)
-          : (double.tryParse(b.chapterNumber) ?? 0)
-              .compareTo(double.tryParse(a.chapterNumber) ?? 0));
-  }
+class _DownloadedDetailScreenState extends State<_DownloadedDetailScreen> {
+  bool _ascending = false;
 
-  void _openChapter(DownloadedChapter downloadedChapter) {
-    final manga = Manga(
-      slug: widget.mangaSlug,
-      title: widget.mangaTitle,
-      coverURL: widget.mangaCover,
-    );
-    final chapter = Chapter(
-      slug: downloadedChapter.chapterSlug,
-      number: downloadedChapter.chapterNumber,
-      pages: downloadedChapter.pages,
-    );
-
-    final allChapters = downloadedChapters
-        .map((dc) => Chapter(
-              slug: dc.chapterSlug,
-              number: dc.chapterNumber,
-              pages: dc.pages,
-            ))
-        .toList();
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ReaderScreen(
-          manga: manga,
-          chapter: chapter,
-          allChapters: allChapters,
-          initialPage: 0,
-          preloadedPages: downloadedChapter.pages,
-          isOfflineMode: true,
-        ),
-      ),
-    );
+  List<DownloadedChapter> get _sortedChapters {
+    final list = List.of(widget.group.chapters);
+    list.sort((a, b) {
+      final na = double.tryParse(a.chapterNumber) ?? 0;
+      final nb = double.tryParse(b.chapterNumber) ?? 0;
+      return _ascending ? na.compareTo(nb) : nb.compareTo(na);
+    });
+    return list;
   }
 
   @override
   Widget build(BuildContext context) {
-    final chapters = downloadedChapters;
+    final dm = context.watch<DownloadManager>();
+    final chapters = _sortedChapters;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
         backgroundColor: AppTheme.surface,
-        title: Text(widget.mangaTitle,
-            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 16)),
+        title: Text(widget.group.mangaTitle,
+            style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 16)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: AppTheme.textSecondary, size: 18),
+          onPressed: () => Navigator.pop(context)),
       ),
-      body: chapters.isEmpty
-          ? const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.inbox, size: 48, color: AppTheme.textTertiary),
-                  SizedBox(height: 12),
-                  Text('No downloaded chapters',
-                      style: TextStyle(color: AppTheme.textSecondary)),
-                ],
-              ),
-            )
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: CachedMangaImage(
-                            url: widget.mangaCover,
-                            width: 110,
-                            height: 155),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(widget.mangaTitle,
-                                style: const TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppTheme.textPrimary)),
-                            const SizedBox(height: 8),
-                            Text('${chapters.length} chapters downloaded',
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    color: AppTheme.textSecondary)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(color: AppTheme.border),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  child: Row(
-                    children: [
-                      Text('${chapters.length} CHAPTERS',
-                          style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.textSecondary,
-                              letterSpacing: 2)),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: () =>
-                            setState(() => chapterSortAsc = !chapterSortAsc),
-                        child: Row(children: [
-                          Icon(
-                              chapterSortAsc
-                                  ? Icons.arrow_upward
-                                  : Icons.arrow_downward,
-                              size: 12,
-                              color: AppTheme.textSecondary),
-                          const SizedBox(width: 4),
-                          Text(chapterSortAsc ? 'Oldest' : 'Newest',
-                              style: const TextStyle(
-                                  color: AppTheme.textSecondary,
-                                  fontSize: 12)),
-                        ]),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: chapters.length,
-                    separatorBuilder: (_, __) => const Divider(
-                        color: AppTheme.border, indent: 16),
-                    itemBuilder: (_, i) {
-                      final dc = chapters[i];
-                      return ListTile(
-                        title: Text('Chapter ${dc.chapterNumber}',
-                            style: const TextStyle(
-                                color: AppTheme.textPrimary,
-                                fontSize: 14)),
-                        subtitle: const Row(children: [
-                          Icon(Icons.download_done,
-                              color: AppTheme.success, size: 14),
-                          SizedBox(width: 4),
-                          Text('Downloaded',
-                              style: TextStyle(
-                                  color: AppTheme.success, fontSize: 12)),
-                        ]),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  color: AppTheme.textTertiary, size: 20),
-                              onPressed: () => _confirmDelete(dc),
-                            ),
-                            const Icon(Icons.chevron_right,
-                                color: AppTheme.textTertiary),
-                          ],
-                        ),
-                        onTap: () => _openChapter(dc),
-                      );
-                    },
-                  ),
-                ),
-              ],
+      body: Column(children: [
+        // ─── Manga info ──────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            ClipRRect(borderRadius: BorderRadius.circular(12),
+              child: CachedMangaImage(url: widget.group.mangaCover, width: 90, height: 127)),
+            const SizedBox(width: 14),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(widget.group.mangaTitle,
+                style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+              const SizedBox(height: 6),
+              Row(children: [
+                const Icon(Icons.download_done, size: 14, color: AppTheme.success),
+                const SizedBox(width: 5),
+                Text('${chapters.length} chapters', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13)),
+              ]),
+            ])),
+          ]),
+        ),
+        const Divider(color: AppTheme.border, height: 1),
+        // ─── Sort bar ────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(children: [
+            Text('${chapters.length} CHAPTERS', style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.textSecondary, letterSpacing: 1.5)),
+            const Spacer(),
+            GestureDetector(
+              onTap: () => setState(() => _ascending = !_ascending),
+              child: Row(children: [
+                Icon(_ascending ? Icons.arrow_upward : Icons.arrow_downward, size: 13, color: AppTheme.textSecondary),
+                const SizedBox(width: 4),
+                Text(_ascending ? 'Oldest' : 'Newest', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+              ]),
             ),
+          ]),
+        ),
+        // ─── Chapter list ────────────────────────────────────────────
+        Expanded(child: ListView.separated(
+          itemCount: chapters.length,
+          separatorBuilder: (_, __) => const Divider(color: AppTheme.border, height: 1, indent: 16),
+          itemBuilder: (_, i) {
+            final ch = chapters[i];
+            return ListTile(
+              title: Text('Chapter ${ch.chapterNumber}',
+                style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+              subtitle: Row(children: [
+                const Icon(Icons.download_done, size: 12, color: AppTheme.success),
+                const SizedBox(width: 4),
+                Text('Downloaded', style: GoogleFonts.inter(color: AppTheme.success, fontSize: 12)),
+              ]),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(icon: const Icon(Icons.delete_outline, color: AppTheme.textTertiary, size: 20),
+                  onPressed: () => _confirmDelete(context, dm, ch)),
+                const Icon(Icons.chevron_right, color: AppTheme.textTertiary, size: 18),
+              ]),
+              onTap: () => _openChapter(context, ch),
+            );
+          },
+        )),
+      ]),
     );
   }
 
-  void _confirmDelete(DownloadedChapter dc) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Delete Chapter',
-            style: TextStyle(color: AppTheme.textPrimary)),
-        content: Text('Delete Chapter ${dc.chapterNumber}?',
-            style: const TextStyle(color: AppTheme.textSecondary)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () {
-              dm.deleteChapter(dc.mangaSlug, dc.chapterSlug);
-              Navigator.pop(context);
-            },
-            child: const Text('Delete',
-                style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
+  void _openChapter(BuildContext context, DownloadedChapter dc) {
+    final manga = Manga(slug: widget.group.mangaSlug, title: widget.group.mangaTitle, coverURL: widget.group.mangaCover);
+    final chapter = Chapter(slug: dc.chapterSlug, number: dc.chapterNumber, pages: dc.pages);
+    final allChapters = _sortedChapters.map((d) => Chapter(slug: d.chapterSlug, number: d.chapterNumber, pages: d.pages)).toList();
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderScreen(
+      manga: manga, chapter: chapter, allChapters: allChapters,
+      initialPage: 0, preloadedPages: dc.pages, isOfflineMode: true)));
+  }
+
+  void _confirmDelete(BuildContext context, DownloadManager dm, DownloadedChapter ch) {
+    showDialog(context: context, builder: (_) => AlertDialog(
+      backgroundColor: AppTheme.surface,
+      title: Text('Delete Chapter', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
+      content: Text('Delete Chapter ${ch.chapterNumber}?', style: GoogleFonts.inter(color: AppTheme.textSecondary)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context),
+          child: Text('Cancel', style: GoogleFonts.inter(color: AppTheme.textSecondary))),
+        TextButton(onPressed: () { dm.deleteChapter(ch.mangaSlug, ch.chapterSlug); Navigator.pop(context); Navigator.pop(context); },
+          child: Text('Delete', style: GoogleFonts.inter(color: AppTheme.danger, fontWeight: FontWeight.w600))),
+      ],
+    ));
   }
 }

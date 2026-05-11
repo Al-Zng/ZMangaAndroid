@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -17,11 +18,13 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
   bool _isShowingCloudflare = false;
 
-  // IndexedStack يحافظ على حالة كل تاب — لا إعادة بناء
+  // ✅ FIX BG: نتتبع وقت الدخول للخلفية لمنع إعادة التحقق الغير ضرورية
+  DateTime? _lastBackgroundTime;
+
   final List<Widget> _tabs = const [
     HomeScreen(),
     SearchScreen(),
@@ -30,24 +33,68 @@ class _MainShellState extends State<MainShell> {
     HistoryScreen(),
   ];
 
+  // ─── أيكونات outlined/filled مطابقة لنسخة iOS ────────────────
+  static const _navItems = [
+    _NavItem(icon: Icons.home_outlined,       activeIcon: Icons.home,              label: 'Home'),
+    _NavItem(icon: Icons.search,              activeIcon: Icons.search,             label: 'Search'),
+    _NavItem(icon: Icons.library_books_outlined, activeIcon: Icons.library_books,  label: 'Library'),
+    _NavItem(icon: Icons.download_outlined,   activeIcon: Icons.download,           label: 'Downloads'),
+    _NavItem(icon: Icons.access_time_outlined,activeIcon: Icons.access_time_filled, label: 'History'),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // ✅ FIX BG: مراقبة دورة حياة التطبيق
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _lastBackgroundTime = DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      _onAppResumed();
+    }
+  }
+
+  void _onAppResumed() {
+    if (_lastBackgroundTime == null) return;
+    final bgDuration = DateTime.now().difference(_lastBackgroundTime!);
+
+    // ✅ FIX BG: إذا كان التطبيق في الخلفية لأقل من 3 دقائق، لا نُعيد التحقق
+    // فقط إذا تجاوز 3 دقائق نتحقق من CF
+    if (bgDuration.inMinutes >= 3) {
+      // أعد تعيين حالة CF لتجنب خلفية WebView معطلة
+      final appState = context.read<AppState>();
+      appState.markCfExpiredFromBackground();
+    }
+  }
+
   void _showCloudflareBypass(BuildContext context, AppState appState) {
     if (_isShowingCloudflare) return;
     _isShowingCloudflare = true;
-
-    final cfUrl = appState.cloudflareURL!;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       isDismissible: false,
       enableDrag: false,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (_) => CloudflareBypassSheet(
-        url: cfUrl,
+        url: appState.cloudflareURL!,
         appState: appState,
       ),
-    ).whenComplete(() {
-      _isShowingCloudflare = false;
-    });
+    ).whenComplete(() => _isShowingCloudflare = false);
   }
 
   @override
@@ -63,55 +110,70 @@ class _MainShellState extends State<MainShell> {
       });
     }
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _tabs,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: AppTheme.surface,
+        systemNavigationBarIconBrightness: Brightness.light,
       ),
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (!net.isConnected)
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        body: IndexedStack(index: _currentIndex, children: _tabs),
+        bottomNavigationBar: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ─── شريط بدون اتصال ──────────────────────────────────
+            if (!net.isConnected)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+                color: Colors.red.withOpacity(0.9),
+                child: const Row(
+                  children: [
+                    Icon(Icons.wifi_off, color: Colors.white, size: 14),
+                    SizedBox(width: 8),
+                    Text('No Internet Connection',
+                        style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+            // ─── شريط التنقل ──────────────────────────────────────
             Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                  vertical: 6, horizontal: 16),
-              color: Colors.red.withOpacity(0.85),
-              child: const Row(
-                children: [
-                  Icon(Icons.wifi_off, color: Colors.white, size: 14),
-                  SizedBox(width: 8),
-                  Text('No Internet Connection',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500)),
-                ],
+              decoration: const BoxDecoration(
+                color: AppTheme.surface,
+                border: Border(top: BorderSide(color: AppTheme.border, width: 0.5)),
+              ),
+              child: SafeArea(
+                top: false,
+                child: BottomNavigationBar(
+                  currentIndex: _currentIndex,
+                  onTap: (i) => setState(() => _currentIndex = i),
+                  backgroundColor: Colors.transparent,
+                  selectedItemColor: AppTheme.accent,
+                  unselectedItemColor: AppTheme.textTertiary,
+                  type: BottomNavigationBarType.fixed,
+                  elevation: 0,
+                  selectedFontSize: 10,
+                  unselectedFontSize: 10,
+                  items: _navItems.map((item) => BottomNavigationBarItem(
+                    icon: Icon(_currentIndex == _navItems.indexOf(item)
+                        ? item.activeIcon : item.icon),
+                    label: item.label,
+                  )).toList(),
+                ),
               ),
             ),
-          BottomNavigationBar(
-            currentIndex: _currentIndex,
-            onTap: (index) => setState(() => _currentIndex = index),
-            backgroundColor: AppTheme.surface,
-            selectedItemColor: AppTheme.accent,
-            unselectedItemColor: AppTheme.textTertiary,
-            type: BottomNavigationBarType.fixed,
-            items: const [
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.home), label: 'Home'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.search), label: 'Search'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.library_books), label: 'Library'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.download), label: 'Downloads'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.history), label: 'History'),
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+}
+
+class _NavItem {
+  final IconData icon;
+  final IconData activeIcon;
+  final String label;
+  const _NavItem({required this.icon, required this.activeIcon, required this.label});
 }

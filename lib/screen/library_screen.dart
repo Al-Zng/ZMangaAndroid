@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -7,198 +8,118 @@ import '../services/download_manager.dart';
 import '../widgets/cached_image.dart';
 import 'manga_detail_screen.dart';
 
-enum Category { favorites, wantToRead, completed, downloaded }
-
-enum SortOption { dateAdded, title }
+enum _Category { favorites, wantToRead, completed, downloaded }
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
-
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  Category _selectedCategory = Category.favorites;
-  SortOption _sortOption = SortOption.dateAdded;
+  _Category _cat = _Category.favorites;
 
-  List<Manga> _displayedManga(AppState store) {
-    List<Manga> list;
-    switch (_selectedCategory) {
-      case Category.favorites:
-        list = store.library;
-        break;
-      case Category.wantToRead:
-        list = store.wantToRead;
-        break;
-      case Category.completed:
-        list = store.completed;
-        break;
-      case Category.downloaded:
-        final slugs = DownloadManager.shared.downloads.values
-            .map((e) => e.mangaSlug)
-            .toSet();
-        list = (store.library + store.wantToRead + store.completed)
-            .where((m) => slugs.contains(m.slug))
-            .toList();
-        break;
+  List<Manga> _items(AppState store) {
+    switch (_cat) {
+      case _Category.favorites:  return store.library;
+      case _Category.wantToRead: return store.wantToRead;
+      case _Category.completed:  return store.completed;
+      case _Category.downloaded:
+        final slugs = DownloadManager.shared.downloads.values.map((e) => e.mangaSlug).toSet();
+        final all = {...store.library, ...store.wantToRead, ...store.completed};
+        return all.where((m) => slugs.contains(m.slug)).toList();
     }
-    if (_sortOption == SortOption.title) {
-      list.sort((a, b) => a.title.compareTo(b.title));
-    }
-    return list;
   }
 
-  void _removeFromCurrentCategory(AppState store, Manga manga) {
-    switch (_selectedCategory) {
-      case Category.favorites:
-        store.removeFromLibrary(manga);
-        break;
-      case Category.wantToRead:
-        store.removeWantToRead(manga);
-        break;
-      case Category.completed:
-        store.removeCompleted(manga);
-        break;
-      case Category.downloaded:
-        break;
-    }
-  }
+  static const _labels = {
+    _Category.favorites:  ('Favorites',  Icons.heart_broken_outlined),
+    _Category.wantToRead: ('Want to Read', Icons.bookmark_outline),
+    _Category.completed:  ('Completed',  Icons.check_circle_outline),
+    _Category.downloaded: ('Downloads',  Icons.download_outlined),
+  };
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<AppState>();
-    final items = _displayedManga(store);
+    final items = _items(store);
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
         backgroundColor: AppTheme.surface,
-        title: const Text('Library', style: TextStyle(color: AppTheme.textPrimary)),
-        actions: [
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.sort, color: AppTheme.textSecondary),
-            onSelected: (val) => setState(() {
-              _sortOption =
-                  val == 'Title' ? SortOption.title : SortOption.dateAdded;
-            }),
-            itemBuilder: (_) => ['Date Added', 'Title']
-                .map((s) => PopupMenuItem(value: s, child: Text(s)))
-                .toList(),
-          ),
-        ],
+        title: Text('Library', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 17)),
       ),
-      body: Column(
-        children: [
-          // Category tabs
-          Container(
-            height: 50,
-            color: AppTheme.surface,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              children: Category.values.map((cat) {
-                final selected = cat == _selectedCategory;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: GestureDetector(
-                    onTap: () => setState(() => _selectedCategory = cat),
-                    child: Chip(
-                      label: Text(
-                        cat.name[0].toUpperCase() + cat.name.substring(1),
-                        style: TextStyle(
-                          color: selected
-                              ? AppTheme.bg
-                              : AppTheme.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                      backgroundColor:
-                          selected ? AppTheme.accent : AppTheme.card,
-                      side: BorderSide(
-                          color: selected
-                              ? Colors.transparent
-                              : AppTheme.border),
-                    ),
+      body: Column(children: [
+        // ─── Category Pills ────────────────────────────────────────
+        Container(
+          height: 50, color: AppTheme.surface,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            children: _Category.values.map((cat) {
+              final selected = cat == _cat;
+              final info = _labels[cat]!;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: GestureDetector(
+                  onTap: () => setState(() => _cat = cat),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: selected ? AppTheme.accent : AppTheme.card,
+                      borderRadius: BorderRadius.circular(20),
+                      border: selected ? null : Border.all(color: AppTheme.border)),
+                    child: Row(children: [
+                      Icon(info.$2, size: 13, color: selected ? AppTheme.bg : AppTheme.textSecondary),
+                      const SizedBox(width: 5),
+                      Text(info.$1, style: GoogleFonts.inter(
+                        fontSize: 12, fontWeight: FontWeight.w500,
+                        color: selected ? AppTheme.bg : AppTheme.textSecondary)),
+                    ]),
                   ),
-                );
-              }).toList(),
-            ),
+                ),
+              );
+            }).toList(),
           ),
-          const Divider(color: AppTheme.border, height: 1),
-          // Grid
-          Expanded(
-            child: items.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.library_books,
-                            size: 48, color: AppTheme.textTertiary),
-                        const SizedBox(height: 12),
-                        const Text('No manga here',
-                            style: TextStyle(color: AppTheme.textSecondary)),
-                      ],
-                    ),
-                  )
-                : GridView.builder(
-                    padding: const EdgeInsets.all(12),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      childAspectRatio: 0.65,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 16,
-                    ),
-                    itemCount: items.length,
-                    itemBuilder: (_, i) {
-                      final m = items[i];
-                      return GestureDetector(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => MangaDetailScreen(
-                              slug: m.slug,
-                              preloadTitle: m.title,
-                              preloadCover: m.coverURL,
-                            ),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: CachedMangaImage(
-                                        url: m.highQualityCoverURL),
-                                  ),
-                                  Positioned(
-                                    top: 4,
-                                    right: 4,
-                                    child: Icon(Icons.favorite,
-                                        size: 16, color: AppTheme.accent),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Text(m.title,
-                                maxLines: 2,
-                                style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppTheme.textPrimary)),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
+        ),
+        const Divider(color: AppTheme.border, height: 1),
+        // ─── Grid ──────────────────────────────────────────────────
+        Expanded(child: items.isEmpty
+            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.library_books_outlined, size: 56, color: AppTheme.textTertiary),
+                const SizedBox(height: 12),
+                Text('Nothing here yet', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 15)),
+              ]))
+            : GridView.builder(
+                padding: const EdgeInsets.all(12),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3, childAspectRatio: 0.62,
+                  crossAxisSpacing: 10, mainAxisSpacing: 14),
+                itemCount: items.length,
+                itemBuilder: (_, i) => RepaintBoundary(child: _LibraryCard(manga: items[i], category: _cat)),
+              )),
+      ]),
     );
   }
+}
+
+class _LibraryCard extends StatelessWidget {
+  final Manga manga;
+  final _Category category;
+  const _LibraryCard({required this.manga, required this.category});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+      MangaDetailScreen(slug: manga.slug, preloadTitle: manga.title, preloadCover: manga.coverURL))),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: CachedMangaImage(url: manga.highQualityCoverURL, fit: BoxFit.cover))),
+      const SizedBox(height: 5),
+      Text(manga.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+        style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: AppTheme.textPrimary)),
+    ]),
+  );
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -9,144 +10,84 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final appState = context.watch<AppState>();
+    final store = context.watch<AppState>();
+    final dm = context.watch<DownloadManager>();
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
         backgroundColor: AppTheme.surface,
-        title: const Text('Settings',
-            style: TextStyle(color: AppTheme.textPrimary)),
+        title: Text('Settings', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 17)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: AppTheme.textSecondary, size: 18),
+          onPressed: () => Navigator.pop(context)),
       ),
-      body: ListView(
-        children: [
-          const SizedBox(height: 8),
+      body: ListView(children: [
 
-          // ─── وضع الأجهزة الضعيفة ─────────────────────────────────
-          _sectionHeader('⚡ Performance'),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.accentDim,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppTheme.accent.withOpacity(0.3)),
-            ),
-            child: SwitchListTile(
-              // ✅ FIX: وضع الأجهزة الضعيفة — يُحسّن الأداء ويقلل التعليق
-              title: const Text('وضع الأجهزة الضعيفة',
-                  style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
-              subtitle: const Text(
-                  'يُقلل التحميل التلقائي ويُبسّط التنقل بين الفصول — مناسب للأجهزة البطيئة',
-                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-              value: appState.lowEndMode,
-              onChanged: (val) => appState.setLowEndMode(val),
-              activeColor: AppTheme.accent,
-              secondary: Icon(
-                appState.lowEndMode ? Icons.bolt : Icons.phone_android,
-                color: AppTheme.accent,
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          SwitchListTile(
-            title: const Text('Reduce Motion',
-                style: TextStyle(color: AppTheme.textPrimary)),
-            subtitle: const Text('يُقلل الأنيميشن لتحسين الأداء',
-                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-            value: appState.reduceMotion,
-            onChanged: (val) => appState.setReduceMotion(val),
-            activeColor: AppTheme.accent,
-            secondary: const Icon(Icons.animation, color: AppTheme.textSecondary),
-          ),
-          const Divider(color: AppTheme.border),
+        // ─── Reading ────────────────────────────────────────────────
+        _section('Reading'),
+        _toggle('Auto-load next chapter', 'Loads the next chapter as you reach the end',
+          store.autoLoadNextChapter, (v) => store.setAutoLoadNextChapter(v)),
+        _toggle('Keep Screen On While Reading', null,
+          store.keepScreenOn, (v) => store.setKeepScreenOn(v)),
+        _toggle('Reduce Motion', 'Fewer animations for a calmer experience',
+          store.reduceMotion, (v) => store.setReduceMotion(v)),
+        const Divider(color: AppTheme.border, height: 1),
 
-          // ─── Reading ─────────────────────────────────────────────
-          _sectionHeader('Reading'),
-          SwitchListTile(
-            // ✅ FIX: متصل بـ AppState
-            title: const Text('Auto-load next chapter',
-                style: TextStyle(color: AppTheme.textPrimary)),
-            subtitle: const Text('يحمل الفصل التالي تلقائياً أثناء القراءة',
-                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-            value: appState.autoLoadNextChapter,
-            onChanged: (val) => appState.setAutoLoadNextChapter(val),
-            activeColor: AppTheme.accent,
-            secondary:
-                const Icon(Icons.auto_stories, color: AppTheme.textSecondary),
-          ),
-          SwitchListTile(
-            title: const Text('Keep Screen On While Reading',
-                style: TextStyle(color: AppTheme.textPrimary)),
-            value: appState.keepScreenOn,
-            onChanged: (val) => appState.setKeepScreenOn(val),
-            activeColor: AppTheme.accent,
-            secondary: const Icon(Icons.screen_lock_portrait,
-                color: AppTheme.textSecondary),
-          ),
-          const Divider(color: AppTheme.border),
+        // ─── Storage ────────────────────────────────────────────────
+        _section('Storage'),
+        _infoRow('Downloaded Chapters', '${dm.downloadedChapterCount} chapters'),
+        ListTile(
+          leading: const Icon(Icons.delete_sweep_outlined, color: AppTheme.danger),
+          title: Text('Delete All Downloads', style: GoogleFonts.inter(color: AppTheme.danger, fontSize: 15)),
+          onTap: () => _confirmDelete(context, dm),
+        ),
+        const Divider(color: AppTheme.border, height: 1),
 
-          // ─── Storage ─────────────────────────────────────────────
-          _sectionHeader('Storage'),
-          ListTile(
-            leading:
-                const Icon(Icons.delete_sweep, color: AppTheme.danger),
-            title: const Text('Delete All Downloads',
-                style: TextStyle(color: AppTheme.danger)),
-            onTap: () => _confirmDeleteDownloads(context),
-          ),
-          const Divider(color: AppTheme.border),
-
-          // ─── About ───────────────────────────────────────────────
-          _sectionHeader('About'),
-          const ListTile(
-            leading: Icon(Icons.info_outline, color: AppTheme.textSecondary),
-            title: Text('Version',
-                style: TextStyle(color: AppTheme.textPrimary)),
-            trailing: Text('1.0',
-                style: TextStyle(color: AppTheme.textTertiary)),
-          ),
-          const Divider(color: AppTheme.border),
-          const SizedBox(height: 40),
-        ],
-      ),
+        // ─── About ──────────────────────────────────────────────────
+        _section('About'),
+        _infoRow('Version', '1.0.0'),
+        _infoRow('Source', 'lekmanga.site'),
+        const SizedBox(height: 40),
+      ]),
     );
   }
 
-  Widget _sectionHeader(String title) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-        child: Text(title,
-            style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textSecondary,
-                letterSpacing: 1.5)),
-      );
+  Widget _section(String title) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
+    child: Text(title.toUpperCase(),
+        style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700,
+            color: AppTheme.textSecondary, letterSpacing: 1.5)),
+  );
 
-  void _confirmDeleteDownloads(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Delete All Downloads',
-            style: TextStyle(color: AppTheme.textPrimary)),
-        content: const Text('Are you sure? This cannot be undone.',
-            style: TextStyle(color: AppTheme.textSecondary)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () {
-              DownloadManager.shared.removeAllDownloads();
-              Navigator.pop(context);
-            },
-            child: const Text('Delete',
-                style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
+  Widget _toggle(String title, String? subtitle, bool value, ValueChanged<bool> onChanged) =>
+    SwitchListTile(
+      title: Text(title, style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 15)),
+      subtitle: subtitle != null
+          ? Text(subtitle, style: GoogleFonts.inter(color: AppTheme.textTertiary, fontSize: 12))
+          : null,
+      value: value,
+      onChanged: onChanged,
+      activeColor: AppTheme.accent,
     );
+
+  Widget _infoRow(String label, String value) => ListTile(
+    title: Text(label, style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 15)),
+    trailing: Text(value, style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 14)),
+  );
+
+  void _confirmDelete(BuildContext context, DownloadManager dm) {
+    showDialog(context: context, builder: (_) => AlertDialog(
+      backgroundColor: AppTheme.surface,
+      title: Text('Delete All Downloads', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
+      content: Text('This will delete all downloaded chapters permanently.',
+          style: GoogleFonts.inter(color: AppTheme.textSecondary)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context),
+          child: Text('Cancel', style: GoogleFonts.inter(color: AppTheme.textSecondary))),
+        TextButton(onPressed: () { dm.removeAllDownloads(); Navigator.pop(context); },
+          child: Text('Delete', style: GoogleFonts.inter(color: AppTheme.danger, fontWeight: FontWeight.w600))),
+      ],
+    ));
   }
 }

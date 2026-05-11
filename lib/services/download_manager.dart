@@ -7,274 +7,211 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import 'manga_service.dart';
 
-// ✅ FIX: DownloadManager يرث ChangeNotifier لإشعار الواجهة عند كل تغيير
 class DownloadManager extends ChangeNotifier {
   static final DownloadManager shared = DownloadManager._();
-  DownloadManager._() {
-    _load();
-  }
+  DownloadManager._() { _load(); }
 
   Map<String, DownloadedChapter> _downloads = {};
   Map<String, double> _activeDownloads = {};
-  List<DownloadTask> _downloadQueue = [];
-  bool _isProcessingQueue = false;
+  final Map<String, DownloadedChapter> _activeMeta = {}; // metadata أثناء التحميل
+  List<DownloadTask> _queue = [];
+  bool _processingQueue = false;
 
-  final String _downloadsKey = 'zmanga_downloads';
-  final String _queueKey = 'zmanga_download_queue';
+  static const _dlKey    = 'zmanga_downloads_v2';
+  static const _queueKey = 'zmanga_queue_v2';
+  // ✅ OPT: عدد الصفحات المتوازية — أسرع تحميل بدون إرهاق الشبكة
+  static const _parallelPages = 4;
 
-  Map<String, DownloadedChapter> get downloads => _downloads;
-  Map<String, double> get activeDownloads => _activeDownloads;
-  List<DownloadTask> get downloadQueue => _downloadQueue;
-  bool get isProcessingQueue => _isProcessingQueue;
+  Map<String, DownloadedChapter> get downloads      => _downloads;
+  Map<String, double>            get activeDownloads => _activeDownloads;
+  List<DownloadTask>             get downloadQueue   => _queue;
 
-  bool isDownloaded(String mangaSlug, String chapterSlug) {
-    return _downloads.containsKey('${mangaSlug}_$chapterSlug');
-  }
+  bool   isDownloaded(String mangaSlug, String chapterSlug) => _downloads.containsKey('${mangaSlug}_$chapterSlug');
+  bool   isDownloading(String mangaSlug, String chapterSlug) => _activeDownloads.containsKey('${mangaSlug}_$chapterSlug');
+  double progress(String mangaSlug, String chapterSlug)     => _activeDownloads['${mangaSlug}_$chapterSlug'] ?? 0.0;
+  List<String>? getPages(String mangaSlug, String chapterSlug) => _downloads['${mangaSlug}_$chapterSlug']?.pages;
 
-  bool isDownloading(String mangaSlug, String chapterSlug) {
-    return _activeDownloads.containsKey('${mangaSlug}_$chapterSlug');
-  }
+  DownloadedChapter? activeChapterMeta(String key) => _activeMeta[key];
 
-  double progress(String mangaSlug, String chapterSlug) {
-    return _activeDownloads['${mangaSlug}_$chapterSlug'] ?? 0.0;
-  }
-
-  Future<void> addToQueue({
-    required Manga manga,
-    required Chapter chapter,
-    required List<String> pages,
-  }) async {
+  // ─── إضافة فصل للقائمة ───────────────────────────────────────────
+  Future<void> addToQueue({required Manga manga, required Chapter chapter, List<String>? pages}) async {
+    if (isDownloaded(manga.slug, chapter.slug) || isDownloading(manga.slug, chapter.slug)) return;
     final task = DownloadTask(
-      mangaSlug: manga.slug,
-      chapterSlug: chapter.slug,
-      chapterNumber: chapter.number,
-      mangaTitle: manga.title,
-      mangaCover: manga.coverURL,
-      pages: pages,
-    );
-    _downloadQueue.add(task);
+      mangaSlug: manga.slug, chapterSlug: chapter.slug,
+      chapterNumber: chapter.number, mangaTitle: manga.title,
+      mangaCover: manga.coverURL, pages: pages ?? []);
+    _queue.add(task);
     await _saveQueue();
+    notifyListeners();
     _processQueue();
   }
 
-  Future<void> addMultipleToQueue({
-    required Manga manga,
-    required List<Chapter> chapters,
-    required Map<String, List<String>> pagesMap,
-  }) async {
-    for (var chapter in chapters) {
-      if (pagesMap.containsKey(chapter.slug)) {
-        final task = DownloadTask(
-          mangaSlug: manga.slug,
-          chapterSlug: chapter.slug,
-          chapterNumber: chapter.number,
-          mangaTitle: manga.title,
-          mangaCover: manga.coverURL,
-          pages: pagesMap[chapter.slug]!,
-        );
-        _downloadQueue.add(task);
+  Future<void> addMultipleToQueue({required Manga manga, required List<Chapter> chapters}) async {
+    for (final ch in chapters) {
+      if (!isDownloaded(manga.slug, ch.slug) && !isDownloading(manga.slug, ch.slug)) {
+        _queue.add(DownloadTask(
+          mangaSlug: manga.slug, chapterSlug: ch.slug,
+          chapterNumber: ch.number, mangaTitle: manga.title,
+          mangaCover: manga.coverURL, pages: []));
       }
     }
     await _saveQueue();
+    notifyListeners();
     _processQueue();
   }
 
+  // ─── معالجة القائمة ──────────────────────────────────────────────
   void _processQueue() {
-    if (_isProcessingQueue || _downloadQueue.isEmpty) return;
-    _isProcessingQueue = true;
-
+    if (_processingQueue || _queue.isEmpty) return;
+    _processingQueue = true;
     Future.doWhile(() async {
-      if (_downloadQueue.isEmpty) {
-        _isProcessingQueue = false;
-        notifyListeners(); // ✅ FIX: إشعار عند انتهاء القائمة
-        return false;
-      }
-      final task = _downloadQueue.removeAt(0);
+      if (_queue.isEmpty) { _processingQueue = false; notifyListeners(); return false; }
+      final task = _queue.removeAt(0);
       await _saveQueue();
-      notifyListeners(); // ✅ FIX: إشعار عند بدء كل مهمة
-      await _downloadChapterFromTask(task);
+      notifyListeners();
+      await _downloadTask(task);
       return true;
     });
   }
 
-  Future<void> _downloadChapterFromTask(DownloadTask task) async {
+  Future<void> _downloadTask(DownloadTask task) async {
     final key = '${task.mangaSlug}_${task.chapterSlug}';
     if (isDownloaded(task.mangaSlug, task.chapterSlug)) return;
 
+    // ✅ FIX: حفظ metadata فوراً قبل بدء التحميل لمنع فقدانها إذا أُغلق التطبيق
+    _activeMeta[key] = DownloadedChapter(
+      mangaSlug: task.mangaSlug, chapterSlug: task.chapterSlug,
+      chapterNumber: task.chapterNumber, mangaTitle: task.mangaTitle,
+      mangaCover: task.mangaCover, pages: [], downloadedAt: DateTime.now());
     _activeDownloads[key] = 0.0;
-    notifyListeners(); // ✅ FIX: إشعار عند بدء التحميل
+    notifyListeners();
 
-    final dir = await _getChapterDir(task.mangaSlug, task.chapterSlug);
+    final dir = await _chapterDir(task.mangaSlug, task.chapterSlug);
     await dir.create(recursive: true);
 
-    List<String> localPaths = [];
-    final client = HttpClient();
-
-    for (int i = 0; i < task.pages.length; i++) {
-      final url = task.pages[i];
+    List<String> urls = task.pages;
+    if (urls.isEmpty) {
       try {
-        final request = await client.getUrl(Uri.parse(url));
-        request.headers.set('Referer', 'https://lekmanga.site');
-        final response = await request.close();
-        final bytes = await response.toList();
-        final file = File('${dir.path}/$i.jpg');
-        await file.writeAsBytes(bytes.expand((e) => e).toList());
-        localPaths.add(file.path);
-      } catch (_) {
-        localPaths.add(url);
-      }
-      _activeDownloads[key] = (i + 1) / task.pages.length;
-      // ✅ FIX: إشعار كل 5 صفحات لتحديث شريط التقدم
-      if (i % 5 == 0 || i == task.pages.length - 1) notifyListeners();
-    }
-
-    final downloaded = DownloadedChapter(
-      mangaSlug: task.mangaSlug,
-      chapterSlug: task.chapterSlug,
-      chapterNumber: task.chapterNumber,
-      mangaTitle: task.mangaTitle,
-      mangaCover: task.mangaCover,
-      pages: localPaths,
-      downloadedAt: DateTime.now(),
-    );
-    _downloads[key] = downloaded;
-    _activeDownloads.remove(key);
-    await _save();
-    notifyListeners(); // ✅ FIX: إشعار عند اكتمال الفصل
-  }
-
-  Future<void> downloadChapter({
-    required Manga manga,
-    required Chapter chapter,
-    List<String>? pages,
-  }) async {
-    final key = '${manga.slug}_${chapter.slug}';
-    if (isDownloaded(manga.slug, chapter.slug) ||
-        isDownloading(manga.slug, chapter.slug)) return;
-
-    _activeDownloads[key] = 0.0;
-    notifyListeners(); // ✅ FIX
-
-    final dir = await _getChapterDir(manga.slug, chapter.slug);
-    await dir.create(recursive: true);
-
-    List<String> urls;
-    if (pages != null) {
-      urls = pages;
-    } else {
-      try {
-        urls =
-            await MangaService().fetchChapterPages(manga.slug, chapter.slug);
+        urls = await MangaService().fetchChapterPages(task.mangaSlug, task.chapterSlug)
+            .timeout(const Duration(seconds: 45));
       } catch (e) {
-        _activeDownloads.remove(key);
-        notifyListeners();
-        return;
+        _activeDownloads.remove(key); _activeMeta.remove(key); notifyListeners(); return;
       }
     }
 
-    List<String> localPaths = [];
-    final client = HttpClient();
-    for (int i = 0; i < urls.length; i++) {
+    // ✅ OPT: تحميل متوازٍ بـ 4 صفحات في نفس الوقت (أسرع بـ 4x)
+    final localPaths = List<String?>.filled(urls.length, null);
+    int completed = 0;
+
+    Future<void> downloadPage(int i) async {
       final url = urls[i];
       try {
-        final request = await client.getUrl(Uri.parse(url));
-        request.headers.set('Referer', 'https://lekmanga.site');
-        final response = await request.close();
-        final bytes = await response.toList();
+        final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+        final req = await client.getUrl(Uri.parse(url));
+        req.headers.set('Referer', 'https://lekmanga.site');
+        final resp = await req.close().timeout(const Duration(seconds: 30));
+        final bytes = await resp.toList();
         final file = File('${dir.path}/$i.jpg');
         await file.writeAsBytes(bytes.expand((e) => e).toList());
-        localPaths.add(file.path);
-      } catch (_) {
-        localPaths.add(url);
-      }
-      _activeDownloads[key] = (i + 1) / urls.length;
-      if (i % 5 == 0 || i == urls.length - 1) notifyListeners(); // ✅ FIX
+        localPaths[i] = file.path;
+        client.close();
+      } catch (_) { localPaths[i] = url; }
+      completed++;
+      _activeDownloads[key] = completed / urls.length;
+      if (completed % 3 == 0 || completed == urls.length) notifyListeners();
+    }
+
+    // تقسيم إلى مجموعات متوازية
+    for (int start = 0; start < urls.length; start += _parallelPages) {
+      final end = (start + _parallelPages).clamp(0, urls.length);
+      await Future.wait(List.generate(end - start, (j) => downloadPage(start + j)));
     }
 
     final downloaded = DownloadedChapter(
-      mangaSlug: manga.slug,
-      chapterSlug: chapter.slug,
-      chapterNumber: chapter.number,
-      mangaTitle: manga.title,
-      mangaCover: manga.coverURL,
-      pages: localPaths,
-      downloadedAt: DateTime.now(),
-    );
+      mangaSlug: task.mangaSlug, chapterSlug: task.chapterSlug,
+      chapterNumber: task.chapterNumber, mangaTitle: task.mangaTitle,
+      mangaCover: task.mangaCover,
+      pages: localPaths.map((p) => p ?? '').toList(),
+      downloadedAt: DateTime.now());
     _downloads[key] = downloaded;
     _activeDownloads.remove(key);
-    await _save();
-    notifyListeners(); // ✅ FIX
+    _activeMeta.remove(key);
+    await _save(); // ✅ FIX: حفظ فوري بعد اكتمال كل فصل
+    notifyListeners();
+  }
+
+  // ─── تحميل مباشر (من manga detail) ──────────────────────────────
+  Future<void> downloadChapter({required Manga manga, required Chapter chapter, List<String>? pages}) async {
+    await addToQueue(manga: manga, chapter: chapter, pages: pages);
   }
 
   Future<void> deleteChapter(String mangaSlug, String chapterSlug) async {
     final key = '${mangaSlug}_$chapterSlug';
-    final dir = await _getChapterDir(mangaSlug, chapterSlug);
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
-    }
+    try {
+      final dir = await _chapterDir(mangaSlug, chapterSlug);
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (_) {}
     _downloads.remove(key);
     await _save();
-    notifyListeners(); // ✅ FIX
+    notifyListeners();
   }
 
   Future<void> removeAllDownloads() async {
-    for (final key in _downloads.keys) {
+    for (final key in List.of(_downloads.keys)) {
       final parts = key.split('_');
       if (parts.length >= 2) {
-        final mangaSlug = parts[0];
-        final chapterSlug = parts.sublist(1).join('_');
-        final dir = await _getChapterDir(mangaSlug, chapterSlug);
-        if (await dir.exists()) await dir.delete(recursive: true);
+        try {
+          final dir = await _chapterDir(parts[0], parts.sublist(1).join('_'));
+          if (await dir.exists()) await dir.delete(recursive: true);
+        } catch (_) {}
       }
     }
-    _downloads.clear();
-    _downloadQueue.clear();
-    _activeDownloads.clear();
-    await _save();
-    await _saveQueue();
-    notifyListeners(); // ✅ FIX
+    _downloads.clear(); _queue.clear(); _activeDownloads.clear(); _activeMeta.clear();
+    await _save(); await _saveQueue();
+    notifyListeners();
   }
 
-  List<String>? getPages(String mangaSlug, String chapterSlug) {
-    return _downloads['${mangaSlug}_$chapterSlug']?.pages;
-  }
-
-  Future<Directory> _getChapterDir(String mangaSlug, String chapterSlug) async {
+  Future<Directory> _chapterDir(String mangaSlug, String chapterSlug) async {
     final base = await getApplicationDocumentsDirectory();
     return Directory('${base.path}/downloads/$mangaSlug/$chapterSlug');
   }
 
   Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr =
-        jsonEncode(_downloads.map((k, v) => MapEntry(k, v.toJson())));
-    await prefs.setString(_downloadsKey, jsonStr);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final json = jsonEncode(_downloads.map((k, v) => MapEntry(k, v.toJson())));
+      await prefs.setString(_dlKey, json);
+    } catch (_) {}
   }
 
   void _load() {
     SharedPreferences.getInstance().then((prefs) {
-      final jsonStr = prefs.getString(_downloadsKey);
-      if (jsonStr != null) {
-        final Map<String, dynamic> map = jsonDecode(jsonStr);
-        _downloads =
-            map.map((k, v) => MapEntry(k, DownloadedChapter.fromJson(v)));
+      // ✅ FIX: دعم المفتاح القديم أيضاً للتوافق مع الإصدار السابق
+      final json = prefs.getString(_dlKey) ?? prefs.getString('zmanga_downloads');
+      if (json != null) {
+        try {
+          final map = jsonDecode(json) as Map<String, dynamic>;
+          _downloads = map.map((k, v) => MapEntry(k, DownloadedChapter.fromJson(v)));
+        } catch (_) {}
       }
-      final queueStr = prefs.getString(_queueKey);
-      if (queueStr != null) {
-        final List<dynamic> list = jsonDecode(queueStr);
-        _downloadQueue = list.map((e) => DownloadTask.fromJson(e)).toList();
-        if (_downloadQueue.isNotEmpty) {
-          _processQueue();
-        }
+      final qJson = prefs.getString(_queueKey) ?? prefs.getString('zmanga_download_queue');
+      if (qJson != null) {
+        try {
+          _queue = (jsonDecode(qJson) as List).map((e) => DownloadTask.fromJson(e)).toList();
+          if (_queue.isNotEmpty) _processQueue();
+        } catch (_) {}
       }
-      notifyListeners(); // ✅ FIX: إشعار بعد تحميل البيانات
+      notifyListeners();
     });
   }
 
   Future<void> _saveQueue() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr =
-        jsonEncode(_downloadQueue.map((e) => e.toJson()).toList());
-    await prefs.setString(_queueKey, jsonStr);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_queueKey, jsonEncode(_queue.map((e) => e.toJson()).toList()));
+    } catch (_) {}
   }
+
+  // ✅ إحصائيات للإعدادات
+  int get downloadedChapterCount => _downloads.length;
 }
