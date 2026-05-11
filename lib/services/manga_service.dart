@@ -8,6 +8,7 @@ import '../state/app_state.dart';
 import '../core/network/http_service.dart';
 import '../core/network/user_agent.dart';
 import '../core/cloudflare/cloudflare_service.dart';
+import '../core/cloudflare/cookie_service.dart';
 
 class MangaService {
   static const String baseURL = 'https://lekmanga.site';
@@ -84,8 +85,7 @@ class MangaService {
 
   Future<String> fetchHTML(String urlString, {int retryCount = 0}) async {
     try {
-      // ✅ إذا حُل الـ CF مؤخراً، اذهب مباشرة للـ WebView
-      // Dio ليس عنده cf_clearance (HttpOnly)، أما WebView فعنده من cookie store المشترك
+      // ✅ FIX BG: إذا حُل الـ CF مؤخراً (< 2 دقيقة)، اذهب مباشرة للـ WebView
       if (_cfSolvedRecently && retryCount == 0) {
         try {
           final wvHtml = await _fetchHTMLViaWebView(urlString);
@@ -93,20 +93,32 @@ class MangaService {
             return wvHtml;
           }
         } catch (_) {}
-        // لو WebView فشل، أكمل بـ Dio كالمعتاد
       }
 
       final html = await _http.get(urlString);
 
       final isBlock = _cf.isCloudflareBlock(200, html);
       if (isBlock) {
-        // ✅ سقف الـ retry = 1 (مرة واحدة فقط) لمنع الحلقة اللانهائية
         if (retryCount >= 1) {
           throw Exception('Cloudflare challenge could not be solved');
         }
 
+        // ✅ FIX BG: إذا كانت الجلسة صالحة (< 23 ساعة)، استخدم WebView مباشرة
+        // بدون إظهار sheet — cf_clearance موجودة في WebView cookie store
+        final hasValidSession = await CookieService().hasValidSession();
+        if (hasValidSession) {
+          try {
+            final wvHtml = await _fetchHTMLViaWebView(urlString);
+            if (wvHtml.isNotEmpty && !_cf.isCloudflareBlock(200, wvHtml)) {
+              _lastCfSolveTime = DateTime.now();
+              return wvHtml;
+            }
+          } catch (_) {}
+          // WebView فشل رغم الجلسة الصالحة — أكمل لإظهار الـ sheet
+        }
+
         final appState = AppState.current;
-        if (appState == null) return '';
+        if (appState == null) throw Exception('CF challenge: no app state');
 
         final solved = await appState.triggerCloudflare(urlString);
         if (solved) {
@@ -117,11 +129,10 @@ class MangaService {
               return wvHtml;
             }
           } catch (_) {}
-          // ✅ لا نعيد استدعاء fetchHTML هنا — يسبب حلقة لانهائية
-          // إذا فشل WebView بعد الحل، نرمي exception بدل إعادة trigger
           throw Exception('Content unavailable after Cloudflare bypass');
         } else {
-          return '';
+          // ✅ FIX SEARCH: throw بدل return '' حتى يظهر خطأ الشبكة لا "لا نتائج"
+          throw Exception('Cloudflare challenge dismissed by user');
         }
       }
 
@@ -134,8 +145,21 @@ class MangaService {
         if (retryCount >= 1) {
           throw Exception('Cloudflare challenge could not be solved');
         }
+
+        // ✅ FIX BG: نفس المنطق — جلسة صالحة → WebView مباشرة
+        final hasValidSession = await CookieService().hasValidSession();
+        if (hasValidSession) {
+          try {
+            final wvHtml = await _fetchHTMLViaWebView(urlString);
+            if (wvHtml.isNotEmpty && !_cf.isCloudflareBlock(200, wvHtml)) {
+              _lastCfSolveTime = DateTime.now();
+              return wvHtml;
+            }
+          } catch (_) {}
+        }
+
         final appState = AppState.current;
-        if (appState == null) return '';
+        if (appState == null) throw Exception('CF challenge: no app state');
         final solved = await appState.triggerCloudflare(urlString);
         if (solved) {
           _lastCfSolveTime = DateTime.now();
@@ -145,10 +169,10 @@ class MangaService {
               return wvHtml;
             }
           } catch (_) {}
-          // ✅ لا نعيد استدعاء fetchHTML — نرمي exception لمنع الحلقة
           throw Exception('Content unavailable after Cloudflare bypass');
         }
-        return '';
+        // ✅ FIX SEARCH: throw بدل return ''
+        throw Exception('Cloudflare challenge dismissed by user');
       }
 
       throw Exception('Network error: $e');
@@ -339,9 +363,22 @@ class MangaService {
 
     try {
       final Map<String, dynamic> dict = jsonDecode(responseBody);
-      if (dict['data'] is Map && dict['data']['images'] is List) {
-        return (dict['data']['images'] as List)
-            .map((e) => e['url'] as String?)
+
+      // ✅ FIX PLACEHOLDER: الموقع يرسل {"success":true,"data":[{"url":"..."},...]}
+      // الكود القديم كان ينتظر dict['data']['images'] (خاطئ) — مطابقة iOS الآن
+      if (dict['data'] is List) {
+        final urls = (dict['data'] as List)
+            .map((e) => (e as Map<String, dynamic>?)?['url'] as String?)
+            .where((url) => url != null && url.startsWith('http'))
+            .cast<String>()
+            .toList();
+        if (urls.isNotEmpty) return urls;
+      }
+
+      // Fallback: بعض الإصدارات القديمة تستخدم data.images
+      if (dict['data'] is Map && (dict['data'] as Map)['images'] is List) {
+        return ((dict['data'] as Map)['images'] as List)
+            .map((e) => (e as Map<String, dynamic>?)?['url'] as String?)
             .where((url) => url != null && url.startsWith('http'))
             .cast<String>()
             .toList();
