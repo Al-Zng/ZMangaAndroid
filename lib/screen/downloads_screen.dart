@@ -40,7 +40,7 @@ class DownloadsScreen extends StatelessWidget {
                 _header('DOWNLOADING'),
                 ...downloading.map((key) {
                   final prog = dm.activeDownloads[key] ?? 0;
-                  final meta = dm.downloads[downloadKey] ?? dm.activeChapterMeta(downloadKey);
+                  final meta = dm.downloads[key] ?? dm.activeChapterMeta(key);
                   return _DownloadingRow(downloadKey: key, meta: meta, progress: prog);
                 }),
               ],

@@ -156,11 +156,13 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                   elevation: 0,
                   selectedFontSize: 10,
                   unselectedFontSize: 10,
-                  items: _navItems.map((item) => BottomNavigationBarItem(
-                    icon: Icon(_currentIndex == _navItems.indexOf(item)
-                        ? item.activeIcon : item.icon),
-                    label: item.label,
-                  )).toList(),
+                  items: List.generate(_navItems.length, (i) {
+                    final item = _navItems[i];
+                    return BottomNavigationBarItem(
+                      icon: Icon(i == _currentIndex ? item.activeIcon : item.icon),
+                      label: item.label,
+                    );
+                  }),
                 ),
               ),
             ),
