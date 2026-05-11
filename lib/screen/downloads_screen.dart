@@ -40,8 +40,8 @@ class DownloadsScreen extends StatelessWidget {
                 _header('DOWNLOADING'),
                 ...downloading.map((key) {
                   final prog = dm.activeDownloads[key] ?? 0;
-                  final meta = dm.downloads[key] ?? dm.activeChapterMeta(key);
-                  return _DownloadingRow(key: key, meta: meta, progress: prog);
+                  final meta = dm.downloads[downloadKey] ?? dm.activeChapterMeta(downloadKey);
+                  return _DownloadingRow(downloadKey: key, meta: meta, progress: prog);
                 }),
               ],
               if (dm.downloadQueue.isNotEmpty) ...[
@@ -94,10 +94,10 @@ class DownloadsScreen extends StatelessWidget {
 
 // ─── Downloading row ──────────────────────────────────────────────────────────
 class _DownloadingRow extends StatelessWidget {
-  final String key;
+  final String downloadKey;
   final DownloadedChapter? meta;
   final double progress;
-  const _DownloadingRow({required this.key, this.meta, required this.progress});
+  const _DownloadingRow({required this.downloadKey, this.meta, required this.progress});
 
   @override
   Widget build(BuildContext context) => ListTile(
